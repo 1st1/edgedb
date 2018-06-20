@@ -196,6 +196,10 @@ class ContextLevel(compiler.ContextLevel):
     empty_result_type_hint: s_types.Type
     """Type to use if the statement result expression is an empty set ctor."""
 
+    in_function_body: bool
+    """Whether the compiled statement is a body of a function.  This affects
+    if arguments types are provided to the compiler or discovered by it."""
+
     def __init__(self, prevlevel, mode):
         self.mode = mode
 
@@ -245,6 +249,8 @@ class ContextLevel(compiler.ContextLevel):
             self.implicit_id_in_shapes = False
             self.empty_result_type_hint = None
 
+            self.in_function_body = False
+
         else:
             self.schema = prevlevel.schema
             self.derived_target_module = prevlevel.derived_target_module
@@ -280,6 +286,7 @@ class ContextLevel(compiler.ContextLevel):
             self.toplevel_stmt = prevlevel.toplevel_stmt
             self.implicit_id_in_shapes = prevlevel.implicit_id_in_shapes
             self.empty_result_type_hint = prevlevel.empty_result_type_hint
+            self.in_function_body = prevlevel.in_function_body
 
             if mode == ContextSwitchMode.SUBQUERY:
                 self.anchors = prevlevel.anchors.copy()

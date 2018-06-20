@@ -24,7 +24,9 @@ import shutil
 import subprocess
 import textwrap
 
+from distutils import extension as distutils_extension
 from distutils.command import build as distutils_build
+from distutils.command import build_ext as distutils_build_ext
 
 from setuptools import setup
 from setuptools.command import develop as setuptools_develop
@@ -41,12 +43,27 @@ RUNTIME_DEPS = [
     'typing_inspect~=0.3.1',
 ]
 
+CYTHON_DEPENDENCY = 'Cython==0.28.3'
+
+BUILD_DEPS = [
+    CYTHON_DEPENDENCY,
+]
+
 EXTRA_DEPS = {
     'test': [
         'flake8~=3.5.0',
         'pycodestyle~=2.3.1',
     ]
 }
+
+EXT_CFLAGS = ['-O2']
+EXT_LDFLAGS = []
+
+
+if platform.uname().system != 'Windows':
+    EXT_CFLAGS.extend([
+        '-fsigned-char', '-Wall', '-Wsign-compare', '-Wconversion'
+    ])
 
 
 def _compile_parsers(build_lib, inplace=False):
@@ -212,10 +229,108 @@ class develop(setuptools_develop.develop):
         super().run(*args, **kwargs)
 
 
+class build_ext(distutils_build_ext.build_ext):
+
+    user_options = distutils_build_ext.build_ext.user_options + [
+        ('cython-always', None,
+            'run cythonize() even if .c files are present'),
+        ('cython-annotate', None,
+            'Produce a colorized HTML version of the Cython source.'),
+        ('cython-directives=', None,
+            'Cython compiler directives'),
+    ]
+
+    def initialize_options(self):
+        # initialize_options() may be called multiple times on the
+        # same command object, so make sure not to override previously
+        # set options.
+        if getattr(self, '_initialized', False):
+            return
+
+        super(build_ext, self).initialize_options()
+
+        if os.environ.get('PGBASE_DEBUG'):
+            self.cython_always = True
+            self.cython_annotate = True
+            self.cython_directives = "linetrace=True"
+            self.define = 'PGBASE_DEBUG,CYTHON_TRACE,CYTHON_TRACE_NOGIL'
+            self.debug = True
+        else:
+            self.cython_always = False
+            self.cython_annotate = None
+            self.cython_directives = None
+
+    def finalize_options(self):
+        # finalize_options() may be called multiple times on the
+        # same command object, so make sure not to override previously
+        # set options.
+        if getattr(self, '_initialized', False):
+            return
+
+        need_cythonize = self.cython_always
+        cfiles = {}
+
+        for extension in self.distribution.ext_modules:
+            for i, sfile in enumerate(extension.sources):
+                if sfile.endswith('.pyx'):
+                    prefix, ext = os.path.splitext(sfile)
+                    cfile = prefix + '.c'
+
+                    if os.path.exists(cfile) and not self.cython_always:
+                        extension.sources[i] = cfile
+                    else:
+                        if os.path.exists(cfile):
+                            cfiles[cfile] = os.path.getmtime(cfile)
+                        else:
+                            cfiles[cfile] = 0
+                        need_cythonize = True
+
+        if need_cythonize:
+            import pkg_resources
+
+            # Double check Cython presence in case setup_requires
+            # didn't go into effect (most likely because someone
+            # imported Cython before setup_requires injected the
+            # correct egg into sys.path.
+            try:
+                import Cython
+            except ImportError:
+                raise RuntimeError(
+                    'please install {} to compile edgedb from source'.format(
+                        CYTHON_DEPENDENCY))
+
+            cython_dep = pkg_resources.Requirement.parse(CYTHON_DEPENDENCY)
+            if Cython.__version__ not in cython_dep:
+                raise RuntimeError(
+                    'edgedb requires {}, got Cython=={}'.format(
+                        CYTHON_DEPENDENCY, Cython.__version__
+                    ))
+
+            from Cython.Build import cythonize
+
+            directives = {}
+            if self.cython_directives:
+                for directive in self.cython_directives.split(','):
+                    k, _, v = directive.partition('=')
+                    if v.lower() == 'false':
+                        v = False
+                    if v.lower() == 'true':
+                        v = True
+
+                    directives[k] = v
+
+            self.distribution.ext_modules[:] = cythonize(
+                self.distribution.ext_modules,
+                compiler_directives=directives,
+                annotate=self.cython_annotate)
+
+        super(build_ext, self).finalize_options()
+
+
 setup(
     setup_requires=[
         'setuptools_scm',
-    ] + RUNTIME_DEPS,
+    ] + RUNTIME_DEPS + BUILD_DEPS,
     use_scm_version=True,
     name='edgedb-server',
     description='EdgeDB Server',
@@ -225,6 +340,7 @@ setup(
     include_package_data=True,
     cmdclass={
         'build': build,
+        'build_ext': build_ext,
         'develop': develop,
     },
     entry_points={
@@ -234,6 +350,13 @@ setup(
             'edgedb-ctl = edb.server.ctl:main',
         ]
     },
+    ext_modules=[
+        distutils_extension.Extension(
+            "edb.server2.coreserver",
+            ["edb/server2/coreserver.pyx"],
+            extra_compile_args=EXT_CFLAGS,
+            extra_link_args=EXT_LDFLAGS)
+    ],
     install_requires=RUNTIME_DEPS,
     extras_require=EXTRA_DEPS,
     test_suite='tests.suite',

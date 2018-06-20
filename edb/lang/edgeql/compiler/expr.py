@@ -99,7 +99,8 @@ def compile_Parameter(
     if pt is not None and not isinstance(pt, s_types.Type):
         pt = s_basetypes.normalize_type(pt, ctx.schema)
 
-    return setgen.ensure_set(irast.Parameter(type=pt, name=expr.name), ctx=ctx)
+    param = irast.Parameter(type=pt, name=expr.name, context=expr.context)
+    return setgen.ensure_set(param, ctx=ctx)
 
 
 @dispatch.compile.register(qlast.DetachedExpr)
@@ -323,6 +324,35 @@ def compile_TypeCast(
     if (isinstance(expr.expr, qlast.EmptyCollection) and
             maintype.name == 'array'):
         ir_expr = irast.Array()
+
+    elif isinstance(expr.expr, qlast.Parameter) and not ctx.in_function_body:
+        pt = typegen.ql_typeref_to_type(expr.type, ctx=ctx)
+        param_name = expr.expr.name
+        if param_name not in ctx.arguments:
+            if ctx.arguments:
+                first_key: str = next(iter(ctx.arguments))
+                if first_key.isdecimal():
+                    if not param_name.isdecimal():
+                        raise errors.EdgeQLError(
+                            f'expected a positional argument',
+                            context=expr.expr.context)
+                else:
+                    if param_name.isdecimal():
+                        raise errors.EdgeQLError(
+                            f'expected a named argument',
+                            context=expr.expr.context)
+            ctx.arguments[param_name] = pt
+        else:
+            param_first_type = ctx.arguments[param_name]
+            if not param_first_type.explicitly_castable_to(pt, ctx.schema):
+                raise errors.EdgeQLError(
+                    f'cannot cast {param_first_type.displayname} to '
+                    f'{pt.displayname}',
+                    context=expr.expr.context)
+        param = irast.Parameter(
+            type=pt, name=param_name, context=expr.expr.context)
+        return setgen.ensure_set(param, ctx=ctx)
+
     else:
         ir_expr = dispatch.compile(expr.expr, ctx=ctx)
 
