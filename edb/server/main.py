@@ -33,6 +33,8 @@ from asyncpg import cluster as pg_cluster
 
 from edb.lang.common import exceptions
 
+from .. import server2
+
 from . import cluster as edgedb_cluster
 from . import daemon
 from . import defines
@@ -105,6 +107,13 @@ def _run_server(cluster, args):
 
         # Notify systemd that we've started up.
         _sd_notify('READY=1')
+
+        ss = server2.Server(loop, cluster)
+        ss.add_binary_interface(args['bind_address'], args['port'] + 1)
+        loop.run_until_complete(ss.start_serving())
+        logger.info(
+            'Serving EDGE on %s:%s',
+            args['bind_address'], args['port'] + 1)
 
         loop.run_forever()
 

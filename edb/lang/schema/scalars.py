@@ -132,6 +132,17 @@ class ScalarType(nodes.Node, constraints.ConsistencySubject,
 
         return False
 
+    def explicitly_castable_to(self, other: s_types.Type, schema) -> bool:
+        if super().explicitly_castable_to(other, schema):
+            return True
+
+        str_t = schema.get('std::str')
+        if other.issubclass(str_t) or str_t.issubclass(other):
+            # We can cast any scalar (but only scalar, not collection) to text
+            return True
+
+        return False
+
 
 # Target type : source types that can implicitly cast into target
 _implicit_cast_map = {

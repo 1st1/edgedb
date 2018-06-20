@@ -20,6 +20,7 @@
 """EdgeQL to IR compiler."""
 
 
+from edb.lang.edgeql import errors
 from edb.lang.edgeql import parser
 from edb.lang.common import debug
 from edb.lang.common import markup  # NOQA
@@ -65,6 +66,7 @@ def compile_to_ir(expr,
                   arg_types=None,
                   security_context=None,
                   modaliases=None,
+                  as_function_body=False,
                   implicit_id_in_shapes=False):
     """Compile given EdgeQL statement into EdgeDB IR."""
 
@@ -77,7 +79,8 @@ def compile_to_ir(expr,
     return compile_ast_to_ir(
         tree, schema, anchors=anchors, arg_types=arg_types,
         security_context=security_context, modaliases=modaliases,
-        implicit_id_in_shapes=implicit_id_in_shapes)
+        implicit_id_in_shapes=implicit_id_in_shapes,
+        as_function_body=as_function_body)
 
 
 def compile_ast_to_ir(tree,
@@ -89,6 +92,7 @@ def compile_ast_to_ir(tree,
                       derived_target_module=None,
                       result_view_name=None,
                       modaliases=None,
+                      as_function_body=False,
                       implicit_id_in_shapes=False):
     """Compile given EdgeQL AST into EdgeDB IR."""
 
@@ -101,10 +105,23 @@ def compile_ast_to_ir(tree,
         security_context=security_context, arg_types=arg_types,
         derived_target_module=derived_target_module,
         result_view_name=result_view_name,
-        implicit_id_in_shapes=implicit_id_in_shapes)
+        implicit_id_in_shapes=implicit_id_in_shapes,
+        in_function_body=as_function_body)
 
     ir_set = dispatch.compile(tree, ctx=ctx)
     ir_expr = stmtctx.fini_expression(ir_set, ctx=ctx)
+
+    if not as_function_body and ctx.arguments:
+        first_argname = next(iter(ctx.arguments))
+        if first_argname.isdecimal():
+            args_decnames = {int(arg) for arg in ctx.arguments}
+            args_tpl = set(range(len(ctx.arguments)))
+            if args_decnames != args_tpl:
+                missing_args = args_tpl - args_decnames
+                missing_args_repr = ', '.join(f'${a}' for a in missing_args)
+                raise errors.EdgeQLError(
+                    f'missing {missing_args_repr} positional argument'
+                    f'{"s" if len(missing_args) > 1 else ""}')
 
     if debug.flags.edgeql_compile:
         debug.header('Scope Tree')
