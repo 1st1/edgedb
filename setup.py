@@ -249,11 +249,11 @@ class build_ext(distutils_build_ext.build_ext):
 
         super(build_ext, self).initialize_options()
 
-        if os.environ.get('PGBASE_DEBUG'):
+        if os.environ.get('EDGEDB_DEBUG'):
             self.cython_always = True
             self.cython_annotate = True
             self.cython_directives = "linetrace=True"
-            self.define = 'PGBASE_DEBUG,CYTHON_TRACE,CYTHON_TRACE_NOGIL'
+            self.define = 'PG_DEBUG,CYTHON_TRACE,CYTHON_TRACE_NOGIL'
             self.debug = True
         else:
             self.cython_always = False
