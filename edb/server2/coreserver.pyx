@@ -23,26 +23,10 @@
 import collections
 
 
-from edb.server2.pgbase.inc.python cimport (
-    PyMem_Malloc, PyMem_Realloc, PyMem_Calloc, PyMem_Free,
-    PyMemoryView_GET_BUFFER, PyMemoryView_Check,
-    PyMemoryView_FromMemory, PyMemoryView_GetContiguous,
-    PyUnicode_AsUTF8AndSize, PyByteArray_AsString,
-    PyByteArray_Check, PyUnicode_AsUCS4Copy,
-    PyByteArray_Size, PyByteArray_Resize,
-    PyByteArray_FromStringAndSize,
-    PyUnicode_FromKindAndData, PyUnicode_4BYTE_KIND
-)
+include "./pgbase/pgbase.pyx"
 
-
-cimport edb.server2.pgbase.inc.hton as hton
-
-
-include "pgbase/inc/consts.pxi"
-include "pgbase/inc/consts.pxi"
-include "pgbase/inc/buffer.pyx"
-include "edgecon.pyx"
-include "pgcon.pyx"
+include "./edgecon.pyx"
+include "./pgcon.pyx"
 
 
 cdef class CoreServer:

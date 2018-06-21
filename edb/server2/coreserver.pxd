@@ -20,14 +20,10 @@
 # cython: language_level=3
 
 
-from libc.stdint cimport int16_t, int32_t, uint16_t, uint32_t, int64_t, uint64_t
+include "./pgbase/pgbase.pxd"
 
-from .debug cimport PGBASE_DEBUG
-
-include "pgbase/inc/consts.pxi"
-include "pgbase/inc/buffer.pxd"
-include "edgecon.pxd"
-include "pgcon.pxd"
+include "./edgecon.pxd"
+include "./pgcon.pxd"
 
 
 cdef class CoreServer:
