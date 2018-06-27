@@ -22,8 +22,9 @@
 
 include "./pgbase/pgbase.pxd"
 
-include "./edgecon.pxd"
-include "./pgcon.pxd"
+include "./edgecon/edgecon.pxd"
+
+include "./pgcon/pgcon.pxd"
 
 
 cdef class CoreServer:
@@ -36,3 +37,4 @@ cdef class CoreServer:
                            str user, str password, str dbname)
 
     cdef edgecon_parse(self, EdgeConnection con, str stmt_name, str query)
+    cdef edgecon_execute(self, EdgeConnection con, query, bytes bind_args)

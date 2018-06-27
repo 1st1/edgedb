@@ -34,12 +34,14 @@ cdef enum EdgeProtoState:
 
 
 cdef class EdgeConnection:
+
     cdef:
         EdgeConnectionStatus _con_status
         EdgeProtoState _state
         bint _parsing
         bint _reading_messages
         str _dbname
+        str _user
         str _id
         dict _queries
         object _transport
@@ -58,6 +60,8 @@ cdef class EdgeConnection:
     cdef _handle__parse(self)
 
     cdef _handle__sync(self)
+
+    cdef _handle__execute(self)
 
     cdef _pause_parsing(self)
     cdef _resume_parsing(self)

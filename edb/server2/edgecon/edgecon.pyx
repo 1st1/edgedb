@@ -18,12 +18,14 @@
 
 
 cdef class EdgeConnection:
+
     def __init__(self, CoreServer server):
         self._con_status = EDGECON_NEW
         self._state = EDGEPROTO_AUTH
         self._server = server
         self._id = self._server.new_edgecon_id()
         self._dbname = None
+        self._user = None
 
         self._queries = {}
 
@@ -34,9 +36,11 @@ cdef class EdgeConnection:
         self._reading_messages = False
 
     cdef _pause_parsing(self):
+        print('$$$ pause parsing')
         self._parsing = False
 
     cdef _resume_parsing(self):
+        print('$$$ resume parsing')
         self._parsing = True
         if not self._reading_messages:
             self._read_buffer_messages()
@@ -75,6 +79,10 @@ cdef class EdgeConnection:
 
                     elif mtype == b'S':
                         self._handle__sync()
+
+                    elif mtype == b'E':
+                        self._handle__execute()
+
             except Exception as ex:
                 print("EXCEPTION", type(ex), ex)
                 self._state = EDGEPROTO_CLOSED
@@ -135,12 +143,17 @@ cdef class EdgeConnection:
             print('!!!!!!', exc)
             raise exc
 
+    def _on_server_execute_data(self, data):
+        self._write(data)
+        self._resume_parsing()
+
     cdef _handle__auth(self, char mtype):
         if mtype == b'0':
             user = self.buffer.read_utf8()
             password = self.buffer.read_utf8()
             database = self.buffer.read_utf8()
             self._dbname = database
+            self._user = user
 
             # The server will call the "_on_server_auth" callback
             # once we verify the database name and user/password.
@@ -154,6 +167,7 @@ cdef class EdgeConnection:
         msg_buf.write_byte(b'I')
         msg_buf.end_message()
         self._write(msg_buf)
+        self._resume_parsing()
 
     cdef _handle__parse(self):
         stmt_name = self.buffer.read_utf8()
@@ -182,6 +196,11 @@ cdef class EdgeConnection:
         else:
             1 / 0
 
+    cdef _handle__execute(self):
+        stmt_name = self.buffer.read_utf8()
+        bind_args = self.buffer.consume_message().as_bytes()
+        self._server.edgecon_execute(self, self._queries[stmt_name], bind_args)
+
     cdef _handle__startup(self):
         cdef:
             int16_t hi
@@ -200,6 +219,12 @@ cdef class EdgeConnection:
 
         self._con_status = EDGECON_STARTED
         return True
+
+    def get_user(self):
+        return self._user
+
+    def get_dbname(self):
+        return self._dbname
 
     # protocol methods
 
