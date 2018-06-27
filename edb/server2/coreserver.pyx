@@ -25,8 +25,9 @@ import collections
 
 include "./pgbase/pgbase.pyx"
 
-include "./edgecon.pyx"
-include "./pgcon.pyx"
+include "./edgecon/edgecon.pyx"
+
+include "./pgcon/pgcon.pyx"
 
 
 cdef class CoreServer:
@@ -47,3 +48,6 @@ cdef class CoreServer:
     cdef edgecon_parse(self, EdgeConnection con, str stmt_name, str query):
         self._loop.create_task(
             self._parse(con._dbname, stmt_name, query, con._on_server_parse))
+
+    cdef edgecon_execute(self, EdgeConnection con, query, bytes bind_args):
+        self._loop.create_task(self._execute(con, query, bind_args))

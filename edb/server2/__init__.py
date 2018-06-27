@@ -19,6 +19,7 @@
 
 import collections
 import struct
+import typing
 
 from edb.lang import edgeql
 from edb.lang.edgeql import compiler as ql_compiler
@@ -31,6 +32,12 @@ from edb.server.pgsql import delta as delta_cmds
 from edb.server.pgsql import compiler as pg_compiler
 from edb.lang.schema import objects as s_obj
 from edb.lang.schema import types as s_types
+
+
+class PGConParams(typing.NamedTuple):
+    user: str
+    password: str
+    database: str
 
 
 class Interface:
@@ -52,10 +59,11 @@ class BinaryInterface(Interface):
 
 class Database:
 
-    def __init__(self, name, intromech, schema):
+    def __init__(self, name, intromech, schema, addr):
         self.name = name
         self.intromech = intromech
         self.schema = schema
+        self.addr = addr
 
 
 class Query:
@@ -331,8 +339,8 @@ class Server(core.CoreServer):
         try:
             im = intromech.IntrospectionMech(con)
             schema = await im.getschema()
-            print(schema)
-            self._databases[dbname] = Database(dbname, im, schema)
+            print('SCHEMA LOADED', schema)
+            self._databases[dbname] = Database(dbname, im, schema, con._addr)
         finally:
             await con.close()
 
@@ -405,6 +413,28 @@ class Server(core.CoreServer):
             callback(None, None, ex)
         else:
             callback(stmt_name, q, None)
+
+    async def _execute(self, con, query, bind_args: bytes):
+        ca = self._cluster.get_connection_spec()
+        host = ca['host']
+        port = ca['port']
+        p = PGConParams(con.get_user(), '', con.get_dbname())
+
+        db = self._databases[con.get_dbname()]
+
+        con_fut = self._loop.create_future()
+
+        tr, pr = await self._loop.create_unix_connection(
+            lambda: core.PGProto(f'{host}:{port}', con_fut, p, self._loop),
+            db.addr)
+
+        try:
+            await con_fut
+
+            data = await pr.execute_anonymous(query.sql, bind_args, None)
+            con._on_server_execute_data(data)
+        finally:
+            tr.abort()
 
     async def start_serving(self):
         if self._serving:
