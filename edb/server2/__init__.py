@@ -106,6 +106,7 @@ class QueryResultsTypeSerializer:
     #    <pos>         2 bytes, uint16: position of the type in the description
     #    <type>        1 byte
     #    <len>         2 bytes, uint16
+    #    <str>         2 bytes uint16 length, followed by chars
 
     def __init__(self, intromech):
         self.intromech = intromech
@@ -176,8 +177,9 @@ class QueryResultsTypeSerializer:
                 buf.append(type_id.bytes)
                 buf.append(self._pack_uint16(len(subtypes)))
                 for el_name, el_type in zip(element_names, subtypes):
-                    buf.append(el_name.encode('utf-8'))
-                    buf.append(b'\x00')
+                    el_name_bytes = el_name.encode('utf-8')
+                    buf.append(self._pack_uint16(len(el_name_bytes)))
+                    buf.append(el_name_bytes)
                     buf.append(self._pack_uint16(self.uuid_to_pos[el_type]))
 
             else:
@@ -259,8 +261,9 @@ class QueryResultsTypeSerializer:
             buf.append(self._pack_uint16(len(subtypes)))
 
             for el_name, el_type in zip(element_names, subtypes):
-                buf.append(el_name.encode('utf-8'))
-                buf.append(b'\x00')
+                el_name_bytes = el_name.encode('utf-8')
+                buf.append(self._pack_uint16(len(el_name_bytes)))
+                buf.append(el_name_bytes)
                 buf.append(self._pack_uint16(self.uuid_to_pos[el_type]))
 
             self._register_type_id(type_id)
