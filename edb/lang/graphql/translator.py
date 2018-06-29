@@ -29,7 +29,7 @@ from edb.lang.graphql import ast as gqlast, parser as gqlparser
 from edb.lang.schema import error as s_error
 
 from . import types as gt
-from .errors import GraphQLValidationError, GraphQLCoreError
+from . import errors as g_errors
 
 
 class GraphQLTranslatorContext:
@@ -44,8 +44,7 @@ class GraphQLTranslatorContext:
         self.path = []
         self.filter = None
         self.include_base = [False]
-        self.gql_schema = gt.Schema(gqlcore)
-        self.gqlcore_schema = gqlcore._gql_schema
+        self.gqlcore = gqlcore
         self.query = query
 
 
@@ -60,11 +59,11 @@ class GraphQLTranslator(ast.NodeVisitor):
         assert isinstance(name, str)
 
         try:
-            return self._context.gql_schema.get(name)
+            return self._context.gqlcore.get(name)
 
         except s_error.SchemaError:
             if context:
-                raise GraphQLValidationError(
+                raise g_errors.GraphQLValidationError(
                     f"{name!r} does not exist in the schema",
                     context=context)
             raise
@@ -79,7 +78,7 @@ class GraphQLTranslator(ast.NodeVisitor):
 
         if target is None:
             if context:
-                raise GraphQLValidationError(
+                raise g_errors.GraphQLValidationError(
                     f"field {name!r} is " +
                     f"invalid for {base.short_name}",
                     context=context)
@@ -94,7 +93,7 @@ class GraphQLTranslator(ast.NodeVisitor):
         }
 
         gqlresult = gql_proc(
-            self._context.gqlcore_schema,
+            self._context.gqlcore._gql_schema,
             self._context.query,
             variable_values={
                 name[1:]: val for name, val in self._context.variables.items()
@@ -104,7 +103,7 @@ class GraphQLTranslator(ast.NodeVisitor):
 
         if gqlresult.errors:
             for err in gqlresult.errors:
-                raise GraphQLCoreError(
+                raise g_errors.GraphQLCoreError(
                     err.message,
                     line=err.locations[0].line,
                     col=err.locations[0].column,
@@ -165,7 +164,7 @@ class GraphQLTranslator(ast.NodeVisitor):
             self.visit(node.variables)
 
         # base Query needs to be configured specially
-        base = self._context.gql_schema.get('Query')
+        base = self._context.gqlcore.get('Query')
 
         # special treatment of the selection_set, different from inner
         # recursion
@@ -202,7 +201,7 @@ class GraphQLTranslator(ast.NodeVisitor):
                     cond = cond.value
 
                 if not isinstance(cond, bool):
-                    raise GraphQLValidationError(
+                    raise g_errors.GraphQLValidationError(
                         f"'if' argument of {directive.name} " +
                         "directive must be a Boolean",
                         context=directive.context)
@@ -271,7 +270,7 @@ class GraphQLTranslator(ast.NodeVisitor):
         path.append(Step(name=node.name, type=target))
 
         if not top and fail:
-            raise GraphQLValidationError(
+            raise g_errors.GraphQLValidationError(
                 f"field {node.name!r} can only appear at the top-level Query",
                 context=node.context)
 
@@ -454,7 +453,7 @@ class GraphQLTranslator(ast.NodeVisitor):
                 # specialized link, but still legal
                 is_specialized = True
             else:
-                raise GraphQLValidationError(
+                raise g_errors.GraphQLValidationError(
                     f"{base_type.short_name} and {frag_type.short_name} " +
                     "are not related", context=spread.context)
 
@@ -478,6 +477,7 @@ class GraphQLTranslator(ast.NodeVisitor):
                         raise ValueError(f"{arg.name!r} cannot be negative")
                 elif arg.name == 'last':
                     last = arg.value.value
+                    last_context = arg.context
                     if last < 0:
                         raise ValueError(f"{arg.name!r} cannot be negative")
                 elif arg.name == 'before':
@@ -496,9 +496,9 @@ class GraphQLTranslator(ast.NodeVisitor):
                     # 0" really means after "index 1".
                     after += 1
             except Exception:
-                raise GraphQLValidationError(
+                raise g_errors.GraphQLValidationError(
                     f"invalid value for {arg.name!r}: {arg.value.value!r}",
-                    context=arg.context)
+                    context=arg.context) from None
 
         # convert before, after, first and last into offset and limit
         if after is not None:
@@ -519,7 +519,10 @@ class GraphQLTranslator(ast.NodeVisitor):
                 # FIXME: there wasn't any limit, so we can define last
                 # in terms of offset alone without negative OFFSET
                 # implementation
-                raise NotImplementedError
+                raise g_errors.GraphQLTranslationError(
+                    f'last={last} translates to a negative OFFSET in '
+                    f'EdgeQL which is currently unsupported',
+                    context=last_context)
 
         # convert integers into qlast literals
         if offset is not None and not isinstance(offset, qlast.Base):
@@ -538,7 +541,7 @@ class GraphQLTranslator(ast.NodeVisitor):
         # find the first shadowed root
         for i, step in enumerate(path):
             base = step.type
-            if base.shadow:
+            if isinstance(base, gt.GQLShadowType):
                 break
 
         # trim the rest of the path
