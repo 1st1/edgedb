@@ -89,7 +89,10 @@ class QueryResultsTypeSerializer:
     #
     #    shape:         <type=1> <uuid>
     #                            <record-desc 2 ctrl bits + 14 int bits> - TODO
-    #                            <len> [<str> <pos>]+
+    #                            <len> [<flags> <str> <pos>]+
+    #
+    #                   -- where <flags> is 1 byte; highest bit means that
+    #                      the field wasn't explicitly requested
     #
     #    base scalar:   <type=2> <uuid>
     #
