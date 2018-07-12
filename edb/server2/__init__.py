@@ -83,6 +83,9 @@ class Query:
 
 class QueryResultsTypeSerializer:
 
+    EDGE_POINTER_IS_IMPLICIT = 1 << 0
+    EDGE_POINTER_IS_LINKPROP = 1 << 1
+
     # Encoding:
     #
     #    set:           <type=0> <uuid> <pos>
@@ -91,8 +94,10 @@ class QueryResultsTypeSerializer:
     #                            <record-desc 2 ctrl bits + 14 int bits> - TODO
     #                            <len> [<flags> <str> <pos>]+
     #
-    #                   -- where <flags> is 1 byte; highest bit means that
-    #                      the field wasn't explicitly requested
+    #                   -- where <flags> is 1 byte;
+    #                      * 1 << 0 bit: the field wasn't explicitly requested
+    #                                    (e.g. "id" or "__type__")
+    #                      * 1 << 1 bit: the field is a link property
     #
     #    base scalar:   <type=2> <uuid>
     #
@@ -141,6 +146,9 @@ class QueryResultsTypeSerializer:
 
     def _pack_uint16(self, i):
         return struct.pack('!H', i)
+
+    def _pack_uint8(self, i):
+        return struct.pack('!B', i)
 
     def _register_type_id(self, type_id):
         if type_id not in self.uuid_to_pos:
@@ -230,6 +238,7 @@ class QueryResultsTypeSerializer:
 
             subtypes = []
             element_names = []
+            link_props = []
 
             for ptr in view_shapes[t]:
                 if ptr.singular():
@@ -238,6 +247,7 @@ class QueryResultsTypeSerializer:
                     subtype_id = self._describe_set(ptr.target, view_shapes)
                 subtypes.append(subtype_id)
                 element_names.append(ptr.shortname.name)
+                link_props.append(False)
 
             if t.rptr is not None:
                 # There are link properties in the mix
@@ -250,6 +260,7 @@ class QueryResultsTypeSerializer:
                             ptr.target, view_shapes)
                     subtypes.append(subtype_id)
                     element_names.append(ptr.shortname.name)
+                    link_props.append(True)
 
             type_id = self._get_collection_type_id(
                 base_type_id, subtypes, element_names)
@@ -263,7 +274,14 @@ class QueryResultsTypeSerializer:
             assert len(subtypes) == len(element_names)
             buf.append(self._pack_uint16(len(subtypes)))
 
-            for el_name, el_type in zip(element_names, subtypes):
+            for el_name, el_type, el_lp in zip(element_names,
+                                               subtypes, link_props):
+                flags = 0
+                if el_lp:
+                    flags |= self.EDGE_POINTER_IS_LINKPROP
+                buf.append(self._pack_uint8(flags))
+                print('!!!!!!!!!!!!!!!!!!!!!!!!', self._pack_uint8(flags), flags)
+
                 el_name_bytes = el_name.encode('utf-8')
                 buf.append(self._pack_uint16(len(el_name_bytes)))
                 buf.append(el_name_bytes)
