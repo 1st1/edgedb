@@ -232,8 +232,6 @@ class develop(setuptools_develop.develop):
 class build_ext(distutils_build_ext.build_ext):
 
     user_options = distutils_build_ext.build_ext.user_options + [
-        ('cython-always', None,
-            'run cythonize() even if .c files are present'),
         ('cython-annotate', None,
             'Produce a colorized HTML version of the Cython source.'),
         ('cython-directives=', None,
@@ -267,62 +265,43 @@ class build_ext(distutils_build_ext.build_ext):
         if getattr(self, '_initialized', False):
             return
 
-        need_cythonize = self.cython_always
-        cfiles = {}
+        import pkg_resources
 
-        for extension in self.distribution.ext_modules:
-            for i, sfile in enumerate(extension.sources):
-                if sfile.endswith('.pyx'):
-                    prefix, ext = os.path.splitext(sfile)
-                    cfile = prefix + '.c'
+        # Double check Cython presence in case setup_requires
+        # didn't go into effect (most likely because someone
+        # imported Cython before setup_requires injected the
+        # correct egg into sys.path.
+        try:
+            import Cython
+        except ImportError:
+            raise RuntimeError(
+                'please install {} to compile edgedb from source'.format(
+                    CYTHON_DEPENDENCY))
 
-                    if os.path.exists(cfile) and not self.cython_always:
-                        extension.sources[i] = cfile
-                    else:
-                        if os.path.exists(cfile):
-                            cfiles[cfile] = os.path.getmtime(cfile)
-                        else:
-                            cfiles[cfile] = 0
-                        need_cythonize = True
+        cython_dep = pkg_resources.Requirement.parse(CYTHON_DEPENDENCY)
+        if Cython.__version__ not in cython_dep:
+            raise RuntimeError(
+                'edgedb requires {}, got Cython=={}'.format(
+                    CYTHON_DEPENDENCY, Cython.__version__
+                ))
 
-        if need_cythonize:
-            import pkg_resources
+        from Cython.Build import cythonize
 
-            # Double check Cython presence in case setup_requires
-            # didn't go into effect (most likely because someone
-            # imported Cython before setup_requires injected the
-            # correct egg into sys.path.
-            try:
-                import Cython
-            except ImportError:
-                raise RuntimeError(
-                    'please install {} to compile edgedb from source'.format(
-                        CYTHON_DEPENDENCY))
+        directives = {}
+        if self.cython_directives:
+            for directive in self.cython_directives.split(','):
+                k, _, v = directive.partition('=')
+                if v.lower() == 'false':
+                    v = False
+                if v.lower() == 'true':
+                    v = True
 
-            cython_dep = pkg_resources.Requirement.parse(CYTHON_DEPENDENCY)
-            if Cython.__version__ not in cython_dep:
-                raise RuntimeError(
-                    'edgedb requires {}, got Cython=={}'.format(
-                        CYTHON_DEPENDENCY, Cython.__version__
-                    ))
+                directives[k] = v
 
-            from Cython.Build import cythonize
-
-            directives = {}
-            if self.cython_directives:
-                for directive in self.cython_directives.split(','):
-                    k, _, v = directive.partition('=')
-                    if v.lower() == 'false':
-                        v = False
-                    if v.lower() == 'true':
-                        v = True
-
-                    directives[k] = v
-
-            self.distribution.ext_modules[:] = cythonize(
-                self.distribution.ext_modules,
-                compiler_directives=directives,
-                annotate=self.cython_annotate)
+        self.distribution.ext_modules[:] = cythonize(
+            self.distribution.ext_modules,
+            compiler_directives=directives,
+            annotate=self.cython_annotate)
 
         super(build_ext, self).finalize_options()
 
