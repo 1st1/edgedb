@@ -48,6 +48,8 @@ cdef class EdgeConnection:
         CoreServer _server
         ReadBuffer buffer
 
+    cdef _recode_args(self, bytes bind_args)
+
     cdef _read_buffer_messages(self)
     cdef _write(self, buf)
 

@@ -31,6 +31,7 @@ import uuid
 from edb.server.pgsql import delta as delta_cmds
 from edb.server.pgsql import compiler as pg_compiler
 from edb.lang.schema import objects as s_obj
+from edb.lang.schema import scalars as s_scalars
 from edb.lang.schema import types as s_types
 
 
@@ -86,36 +87,6 @@ class QueryResultsTypeSerializer:
     EDGE_POINTER_IS_IMPLICIT = 1 << 0
     EDGE_POINTER_IS_LINKPROP = 1 << 1
 
-    # Encoding:
-    #
-    #    set:           <type=0> <uuid> <pos>
-    #
-    #    shape:         <type=1> <uuid>
-    #                            <record-desc 2 ctrl bits + 14 int bits> - TODO
-    #                            <len> [<flags> <str> <pos>]+
-    #
-    #                   -- where <flags> is 1 byte;
-    #                      * 1 << 0 bit: the field wasn't explicitly requested
-    #                                    (e.g. "id" or "__type__")
-    #                      * 1 << 1 bit: the field is a link property
-    #
-    #    base scalar:   <type=2> <uuid>
-    #
-    #    scalar:        <type=3> <uuid> <pos>
-    #
-    #    tuple:         <type=4> <uuid> <len> [<pos>]*
-    #
-    #    namedtuple:    <type=5> <uuid> <len> [<str> <pos>]+
-    #
-    #    array:         <type=6> <uuid> <pos>
-    #
-    # where:
-    #
-    #    <pos>         2 bytes, uint16: position of the type in the description
-    #    <type>        1 byte
-    #    <len>         2 bytes, uint16
-    #    <str>         2 bytes uint16 length, followed by chars
-
     def __init__(self, intromech):
         self.intromech = intromech
         self.buffer = []
@@ -125,9 +96,6 @@ class QueryResultsTypeSerializer:
         return self.intromech.get_type_id(objtype)
 
     def _get_collection_type_id(self, coll_type, subtypes, element_names=None):
-        if coll_type == 'tuple' and not subtypes:
-            return s_obj.get_known_type_id('empty-tuple')
-
         subtypes = (f"{st}" for st in subtypes)
         string_id = f'{coll_type}\x00{":".join(subtypes)}'
         if element_names:
@@ -168,6 +136,8 @@ class QueryResultsTypeSerializer:
         return set_id
 
     def _describe_type(self, t, view_shapes):
+        # the encoding format is documented in edb/api/types.txt.
+
         buf = self.buffer
 
         if isinstance(t, s_types.Tuple):

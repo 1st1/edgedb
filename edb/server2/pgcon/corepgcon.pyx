@@ -381,7 +381,7 @@ cdef class CorePGProto:
         buf.write_bytestring(b'client_encoding')
         buf.write_bytestring("'{}'".format(self.encoding).encode('ascii'))
 
-        buf.write_bytestring(b'edgedb_include_typeoids_in_output')
+        buf.write_bytestring(b'edgedb_use_typeoids')
         buf.write_bytestring(b'false')
 
         buf.write_str('user', self.encoding)

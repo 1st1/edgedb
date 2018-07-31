@@ -37,7 +37,7 @@ from . import name as sn
 _TYPE_IDS = None
 
 
-def load_type_ids():
+def _load_type_ids():
     import edb.api
 
     types = pathlib.Path(edb.api.__path__[0]) / 'types.txt'
@@ -57,13 +57,16 @@ def load_type_ids():
     return typeids
 
 
-def get_known_type_id(typename):
+def get_type_ids():
     global _TYPE_IDS
-
     if _TYPE_IDS is None:
-        _TYPE_IDS = load_type_ids()
+        _TYPE_IDS = _load_type_ids()
+    return _TYPE_IDS
 
-    return _TYPE_IDS.get(typename)
+
+def get_known_type_id(typename):
+    ids = get_type_ids()
+    return ids.get(typename)
 
 
 def is_named_class(scls):
