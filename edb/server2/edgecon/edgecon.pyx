@@ -196,10 +196,43 @@ cdef class EdgeConnection:
         else:
             1 / 0
 
+    cdef _recode_args(self, bytes bind_args):
+        cdef:
+            FastReadBuffer in_buf = FastReadBuffer.new()
+            WriteBuffer out_buf = WriteBuffer.new()
+            int32_t argsnum
+            ssize_t in_len
+
+        assert cpython.PyBytes_CheckExact(bind_args)
+        in_buf.buf = cpython.PyBytes_AS_STRING(bind_args)
+        in_buf.len = cpython.Py_SIZE(bind_args)
+
+        # all parameters are in binary
+        out_buf.write_int32(0x00010001)
+
+        b = in_buf.read(4)  # ignore buffer length
+        print(b)
+
+
+        # number of elements in the tuple
+        argsnum = hton.unpack_int32(in_buf.read(4))
+
+        out_buf.write_int16(<int16_t>argsnum)
+
+        in_len = in_buf.len
+        out_buf.write_cstr(in_buf.read_all(), in_len)
+
+        # All columns are in binary format
+        out_buf.write_int32(0x00010001)
+
+        return bytes(out_buf)
+
     cdef _handle__execute(self):
         stmt_name = self.buffer.read_utf8()
         bind_args = self.buffer.consume_message().as_bytes()
-        self._server.edgecon_execute(self, self._queries[stmt_name], bind_args)
+        query = self._queries[stmt_name]
+        bind_args = self._recode_args(bind_args)
+        self._server.edgecon_execute(self, query, bind_args)
 
     cdef _handle__startup(self):
         cdef:
