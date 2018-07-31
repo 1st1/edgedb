@@ -280,7 +280,6 @@ class QueryResultsTypeSerializer:
                 if el_lp:
                     flags |= self.EDGE_POINTER_IS_LINKPROP
                 buf.append(self._pack_uint8(flags))
-                print('!!!!!!!!!!!!!!!!!!!!!!!!', self._pack_uint8(flags), flags)
 
                 el_name_bytes = el_name.encode('utf-8')
                 buf.append(self._pack_uint16(len(el_name_bytes)))
@@ -363,7 +362,6 @@ class Server(core.CoreServer):
         try:
             im = intromech.IntrospectionMech(con)
             schema = await im.getschema()
-            print('SCHEMA LOADED', schema)
             self._databases[dbname] = Database(dbname, im, schema, con._addr)
         finally:
             await con.close()
@@ -421,8 +419,6 @@ class Server(core.CoreServer):
 
         in_type_data, in_type_id = QueryResultsTypeSerializer.describe(
             db.intromech, params_type, {})
-
-        print(in_type_id, in_type_data)
 
         return Query(
             dbname,
