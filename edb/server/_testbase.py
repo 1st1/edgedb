@@ -97,7 +97,7 @@ class TestCaseMeta(type(unittest.TestCase)):
             mcls.add_method(methname, ns, meth)
 
         cls = super().__new__(mcls, name, bases, ns)
-        if hasattr(cls, 'get_database_name'):
+        if not ns.get('BASE_TEST_CLASS') and hasattr(cls, 'get_database_name'):
             dbname = cls.get_database_name()
 
             if name in mcls._database_names:
@@ -174,6 +174,9 @@ def _shutdown_cluster(cluster, *, destroy=True):
 
 
 class ClusterTestCase(TestCase):
+
+    BASE_TEST_CLASS = True
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -193,16 +196,23 @@ class RollbackChanges:
 
 
 class ConnectedTestCase(ClusterTestCase):
+
+    BASE_TEST_CLASS = True
+
+    @classmethod
+    def connect(cls, loop, cluster, database=None):
+        return loop.run_until_complete(
+            cluster.connect(user='edgedb', loop=cls.loop, database=database))
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.con = cls.loop.run_until_complete(
-            cls.cluster.connect(user='edgedb', loop=cls.loop))
+        cls.con = cls.connect(cls.loop, cls.cluster)
 
     @classmethod
     def tearDownClass(cls):
         try:
-            cls.con.close()
+            cls.loop.run_until_complete(cls.con.close())
             # Give event loop another iteration so that connection
             # transport has a chance to properly close.
             cls.loop.run_until_complete(asyncio.sleep(0, loop=cls.loop))
@@ -225,6 +235,8 @@ class DatabaseTestCase(ConnectedTestCase):
     # Some tests may want to manage transactions manually,
     # in which case ISOLATED_METHODS will be False.
     ISOLATED_METHODS = True
+
+    BASE_TEST_CLASS = True
 
     def setUp(self):
         if self.ISOLATED_METHODS:
@@ -260,9 +272,7 @@ class DatabaseTestCase(ConnectedTestCase):
             script = f'CREATE DATABASE {dbname};'
             cls.loop.run_until_complete(cls.admin_conn.execute(script))
 
-        cls.con = cls.loop.run_until_complete(
-            cls.cluster.connect(
-                database=dbname, user='edgedb', loop=cls.loop))
+        cls.con = cls.connect(cls.loop, cls.cluster, database=dbname)
 
         if not os.environ.get('EDGEDB_TEST_CASES_SET_UP'):
             script = cls.get_setup_script()
@@ -333,7 +343,7 @@ class DatabaseTestCase(ConnectedTestCase):
             if script:
                 cls.loop.run_until_complete(cls.con.execute(script))
         finally:
-            cls.con.close()
+            cls.loop.run_until_complete(cls.con.close())
             cls.con = cls.admin_conn
 
             try:
@@ -371,6 +381,9 @@ class Error:
 
 
 class BaseQueryTestCase(DatabaseTestCase):
+
+    BASE_TEST_CLASS = True
+
     async def query(self, query):
         query = textwrap.dedent(query)
         return await self.con.execute(query)
@@ -536,9 +549,12 @@ class DDLTestCase(BaseQueryTestCase):
     SERIALIZED = True
     ISOLATED_METHODS = False
 
+    BASE_TEST_CLASS = True
+
 
 class QueryTestCase(BaseQueryTestCase):
-    pass
+
+    BASE_TEST_CLASS = True
 
 
 def get_test_cases_setup(cases):
@@ -623,12 +639,12 @@ async def _setup_database(dbname, setup_script, conn_args):
     try:
         await admin_conn.execute(f'CREATE DATABASE {dbname};')
     finally:
-        admin_conn.close()
+        await admin_conn.close()
 
     dbconn = await edgedb_client.connect(database=dbname, **conn_args)
     try:
         await dbconn.execute(setup_script)
     finally:
-        dbconn.close()
+        await dbconn.close()
 
     return dbname

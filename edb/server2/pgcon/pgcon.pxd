@@ -49,6 +49,7 @@ cdef class PGProto(CorePGProto):
 
     cdef _on_result__connect(self, object waiter)
     cdef _on_result__execute_anonymous(self, object waiter)
+    cdef _on_result__simple_query(self, object waiter)
 
     cdef _handle_waiter_on_connection_lost(self, cause)
 

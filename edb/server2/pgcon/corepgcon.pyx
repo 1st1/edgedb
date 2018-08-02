@@ -77,6 +77,9 @@ cdef class CorePGProto:
                 elif state == PGPROTO_EXECUTE_ANONYMOUS:
                     self._process__execute_anonymous(mtype)
 
+                elif state == PGPROTO_SIMPLE_QUERY:
+                    self._process__simple_query(mtype)
+
                 elif state == PGPROTO_CANCELLED:
                     # discard all messages until the sync message
                     if mtype == b'E':
@@ -151,6 +154,30 @@ cdef class CorePGProto:
             self._parse_msg_ready_for_query()
             self.con_status = PGCON_OK
             self._push_result()
+
+    cdef _process__simple_query(self, char mtype):
+        if mtype in {b'D', b'I', b'T'}:
+            # 'D' - DataRow
+            # 'I' - EmptyQueryResponse
+            # 'T' - RowDescription
+            self.buffer.consume_message()
+
+        elif mtype == b'E':
+            # ErrorResponse
+            self._parse_msg_error_response(True)
+
+        elif mtype == b'Z':
+            # ReadyForQuery
+            self._parse_msg_ready_for_query()
+            self._push_result()
+
+        elif mtype == b'C':
+            # CommandComplete
+            self._parse_msg_command_complete()
+
+        else:
+            # We don't really care about COPY IN etc
+            self.buffer.consume_message()
 
     cdef _process__execute_anonymous(self, char mtype):
         if mtype == b'1':
@@ -402,6 +429,16 @@ cdef class CorePGProto:
         outbuf.write_int32(buf.len() + 4)
         outbuf.write_buffer(buf)
         self._write(outbuf)
+
+    cdef _simple_query(self, str query):
+        cdef WriteBuffer buf
+
+        self._ensure_connected()
+        self._set_state(PGPROTO_SIMPLE_QUERY)
+
+        buf = WriteBuffer.new_message(b'Q')
+        buf.write_str(query, self.encoding)
+        self._write(buf.end_message())
 
     cdef _execute_anonymous(self, str query, bytes bind_data):
         cdef:

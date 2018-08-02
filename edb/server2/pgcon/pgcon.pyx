@@ -74,6 +74,27 @@ cdef class PGProto(CorePGProto):
             self.transport.pause_reading()
 
     @cython.iterable_coroutine
+    async def simple_query(self, str query, timeout):
+        if self.cancel_waiter is not None:
+            await self.cancel_waiter
+        if self.cancel_sent_waiter is not None:
+            await self.cancel_sent_waiter
+            self.cancel_sent_waiter = None
+
+        self._check_state()
+        timeout = self._get_timeout_impl(timeout)
+
+        waiter = self._new_waiter(timeout)
+        try:
+            self._simple_query(query)  # network op
+            self.last_query = query
+        except Exception as ex:
+            waiter.set_exception(ex)
+            self._coreproto_error()
+        finally:
+            return await waiter
+
+    @cython.iterable_coroutine
     async def execute_anonymous(self, str query, bytes bind_data, timeout):
         if self.cancel_waiter is not None:
             await self.cancel_waiter
@@ -83,7 +104,6 @@ cdef class PGProto(CorePGProto):
 
         if not bind_data:
             bind_data = b''
-        bind_buf = WriteBuffer.new()
 
         self._check_state()
         timeout = self._get_timeout_impl(timeout)
@@ -268,6 +288,9 @@ cdef class PGProto(CorePGProto):
     cdef _on_result__execute_anonymous(self, object waiter):
         waiter.set_result(bytes(self.result_data))
 
+    cdef _on_result__simple_query(self, object waiter):
+        waiter.set_result(self.result_status_msg)
+
     cdef _dispatch_result(self):
         waiter = self.waiter
         self.waiter = None
@@ -298,6 +321,9 @@ cdef class PGProto(CorePGProto):
 
             elif self.state == PGPROTO_EXECUTE_ANONYMOUS:
                 self._on_result__execute_anonymous(waiter)
+
+            elif self.state == PGPROTO_SIMPLE_QUERY:
+                self._on_result__simple_query(waiter)
 
             else:
                 raise RuntimeError(
@@ -331,10 +357,12 @@ cdef class PGProto(CorePGProto):
             self.return_extra = False
 
     cdef _on_notice(self, parsed):
-        self.connection._process_log_message(parsed, self.last_query)
+        # self.connection._process_log_message(parsed, self.last_query)
+        pass
 
     cdef _on_notification(self, pid, channel, payload):
-        self.connection._process_notification(pid, channel, payload)
+        # self.connection._process_notification(pid, channel, payload)
+        pass
 
     cdef _on_connection_lost(self, exc):
         if self.closing:
