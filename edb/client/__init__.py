@@ -57,7 +57,7 @@ class Connection:
     def get_last_timings(self):
         return self._protocol._last_timings
 
-    def close(self):
+    async def close(self):
         self._transport.close()
 
     def transaction(self, *, isolation='read_committed', readonly=False,

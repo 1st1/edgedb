@@ -406,8 +406,8 @@ class Server(core.CoreServer):
 
     async def _execute(self, con, query, bind_args: bytes):
         ca = self._cluster.get_connection_spec()
-        host = ca['host']
-        port = ca['port']
+        host = ca.get('host', '')
+        port = ca.get('port', '')
         p = PGConParams(con.get_user(), '', con.get_dbname())
 
         db = self._databases[con.get_dbname()]
@@ -423,6 +423,28 @@ class Server(core.CoreServer):
 
             data = await pr.execute_anonymous(query.sql, bind_args, None)
             con._on_server_execute_data(data)
+        finally:
+            tr.abort()
+
+    async def _simple_query(self, con, script):
+        ca = self._cluster.get_connection_spec()
+        host = ca.get('host', '')
+        port = ca.get('port', '')
+        p = PGConParams(con.get_user(), '', con.get_dbname())
+
+        db = self._databases[con.get_dbname()]
+
+        con_fut = self._loop.create_future()
+
+        tr, pr = await self._loop.create_unix_connection(
+            lambda: core.PGProto(f'{host}:{port}', con_fut, p, self._loop),
+            db.addr)
+
+        try:
+            await con_fut
+
+            data = await pr.simple_query(script, None)
+            con._on_server_simple_query(data)
         finally:
             tr.abort()
 

@@ -38,3 +38,5 @@ cdef class CoreServer:
 
     cdef edgecon_parse(self, EdgeConnection con, str stmt_name, str query)
     cdef edgecon_execute(self, EdgeConnection con, query, bytes bind_args)
+
+    cdef edgecon_simple_query(self, EdgeConnection con, str query)

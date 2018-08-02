@@ -83,6 +83,9 @@ cdef class EdgeConnection:
                     elif mtype == b'E':
                         self._handle__execute()
 
+                    elif mtype == b'Q':
+                        self._handle__simple_query()
+
             except Exception as ex:
                 print("EXCEPTION", type(ex), ex)
                 self._state = EDGEPROTO_CLOSED
@@ -145,6 +148,22 @@ cdef class EdgeConnection:
 
     def _on_server_execute_data(self, data):
         self._write(data)
+        self._state = EDGEPROTO_IDLE
+        self._resume_parsing()
+
+    def _on_server_simple_query(self, data):
+        buf = WriteBuffer.new_message(b'C')  # ParseComplete
+        buf.write_bytestring(data)
+        buf.end_message()
+        self._write(buf)
+
+        msg_buf = WriteBuffer.new_message(b'Z')
+        msg_buf.write_byte(b'I')
+        msg_buf.end_message()
+        self._write(msg_buf)
+
+        print('SENT>>')
+        self._state = EDGEPROTO_IDLE
         self._resume_parsing()
 
     cdef _handle__auth(self, char mtype):
@@ -168,6 +187,10 @@ cdef class EdgeConnection:
         msg_buf.end_message()
         self._write(msg_buf)
         self._resume_parsing()
+
+    cdef _handle__simple_query(self):
+        query = self.buffer.read_utf8()
+        self._server.edgecon_simple_query(self, query)
 
     cdef _handle__parse(self):
         stmt_name = self.buffer.read_utf8()

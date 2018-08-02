@@ -51,3 +51,6 @@ cdef class CoreServer:
 
     cdef edgecon_execute(self, EdgeConnection con, query, bytes bind_args):
         self._loop.create_task(self._execute(con, query, bind_args))
+
+    cdef edgecon_simple_query(self, EdgeConnection con, str query):
+        self._loop.create_task(self._simple_query(con, query))

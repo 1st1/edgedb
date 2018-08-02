@@ -57,6 +57,8 @@ cdef class EdgeConnection:
 
     cdef _handle__auth(self, char mtype)
 
+    cdef _handle__simple_query(self)
+
     cdef _handle__describe(self)
 
     cdef _handle__parse(self)
