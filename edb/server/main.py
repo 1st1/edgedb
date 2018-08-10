@@ -18,6 +18,7 @@
 
 
 import asyncio
+import contextlib
 import getpass
 import ipaddress
 import logging
@@ -27,6 +28,7 @@ import setproctitle
 import signal
 import socket
 import sys
+import tempfile
 
 import click
 from asyncpg import cluster as pg_cluster
@@ -51,6 +53,28 @@ def abort(msg, *args):
 
 def terminate_server(server, loop):
     loop.stop()
+
+
+@contextlib.contextmanager
+def _runstate_dir(path):
+    if path is None:
+        path = '/run'
+        if not os.path.isdir(path):
+            path = '/var/run'
+    if not os.path.isdir(path):
+        abort(f'{path!r} is not a valid path; please point '
+              f'--runstate-dir to a valid directory')
+        return
+
+    try:
+        with tempfile.TemporaryDirectory(prefix='edgedb-', dir=path) as td:
+            yield td
+    except PermissionError as ex:
+        if not edgedb_cluster.is_in_dev_mode():
+            abort(f'no permissions to write to {path!r} directory: {str(ex)}')
+            return
+        with tempfile.TemporaryDirectory(prefix='edgedb-') as td:
+            yield td
 
 
 def _init_cluster(cluster, args):
@@ -85,7 +109,7 @@ def _sd_notify(message):
         sd_sock.close()
 
 
-def _run_server(cluster, args):
+def _run_server(cluster, args, runstate_dir):
     loop = asyncio.get_event_loop()
     srv = None
 
@@ -108,14 +132,17 @@ def _run_server(cluster, args):
         # Notify systemd that we've started up.
         _sd_notify('READY=1')
 
-        ss = server2.Server(loop, cluster)
+        ss = server2.Server(loop, cluster, runstate_dir)
         ss.add_binary_interface(args['bind_address'], args['port'] + 1)
-        loop.run_until_complete(ss.start_serving())
+        loop.run_until_complete(ss.start())
         logger.info(
             'Serving EDGE on %s:%s',
             args['bind_address'], args['port'] + 1)
 
-        loop.run_forever()
+        try:
+            loop.run_forever()
+        finally:
+            loop.run_until_complete(ss.stop())
 
     except KeyboardInterrupt:
         logger.info('Shutting down.')
@@ -187,13 +214,15 @@ def run_server(args):
     else:
         cluster = pg_cluster.RunningCluster(dsn=args['postgres'])
 
-    if args['bootstrap']:
-        _init_cluster(cluster, args)
-    else:
-        _run_server(cluster, args)
-
-    if pg_cluster_started_by_us:
-        cluster.stop()
+    try:
+        if args['bootstrap']:
+            _init_cluster(cluster, args)
+        else:
+            with _runstate_dir(args['runstate_dir']) as rsdir:
+                _run_server(cluster, args, rsdir)
+    finally:
+        if pg_cluster_started_by_us:
+            cluster.stop()
 
 
 @click.command('EdgeDB Server')
@@ -240,6 +269,10 @@ def run_server(args):
     '--daemon-user', type=int)
 @click.option(
     '--daemon-group', type=int)
+@click.option(
+    '--runstate-dir', type=str, default=None,
+    help=('directory where UNIX sockets will be created '
+          '("/run" on Linux by default)'))
 def main(**kwargs):
     logsetup.setup_logging(kwargs['log_level'], kwargs['log_to'])
     exceptions.install_excepthook()

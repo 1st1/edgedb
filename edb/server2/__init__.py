@@ -26,6 +26,7 @@ from edb.lang.edgeql import compiler as ql_compiler
 from edb.server.pgsql import intromech
 
 from . import coreserver as core
+from . import compilerpool
 
 import uuid
 from edb.server.pgsql import delta as delta_cmds
@@ -300,12 +301,14 @@ class QueryResultsTypeSerializer:
 
 class Server(core.CoreServer):
 
-    def __init__(self, loop, cluster):
+    def __init__(self, loop, cluster, runstate_dir):
         super().__init__(loop)
         self._serving = False
         self._interfaces = []
         self._servers = []
         self._cluster = cluster
+        self._runstate_dir = runstate_dir
+        self._cpool = None
 
         self._edgecon_id = 0
 
@@ -448,12 +451,18 @@ class Server(core.CoreServer):
         finally:
             tr.abort()
 
-    async def start_serving(self):
+    async def start(self):
         if self._serving:
             raise RuntimeError('already serving')
         self._serving = True
+
+        self._cpool = await compilerpool.create_pool(
+            capacity=10, runstate_dir=self._runstate_dir)
 
         for iface in self._interfaces:
             srv = await self._loop.create_server(
                 iface.make_protocol, host=iface.host, port=iface.port)
             self._servers.append(srv)
+
+    async def stop(self):
+        await self._cpool.stop()
