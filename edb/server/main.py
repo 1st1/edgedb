@@ -30,6 +30,8 @@ import socket
 import sys
 import tempfile
 
+import uvloop
+
 import click
 from asyncpg import cluster as pg_cluster
 
@@ -276,6 +278,8 @@ def run_server(args):
 def main(**kwargs):
     logsetup.setup_logging(kwargs['log_level'], kwargs['log_to'])
     exceptions.install_excepthook()
+
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
     if kwargs['background']:
         daemon_opts = {'detach_process': True}
