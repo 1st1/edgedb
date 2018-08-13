@@ -564,3 +564,25 @@ class TestTaskGroup(tb.TestCase):
 
         with self.assertRaises(MyBaseExc):
             await runner()
+
+    async def test_taskgroup_22(self):
+
+        async def foo1():
+            await asyncio.sleep(1)
+            return 42
+
+        async def foo2():
+            await asyncio.sleep(2)
+            return 11
+
+        async def runner():
+            async with taskgroup.TaskGroup() as g:
+                g.create_task(foo1())
+                g.create_task(foo2())
+
+        r = self.loop.create_task(runner())
+        await asyncio.sleep(0.05)
+        r.cancel()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await r
