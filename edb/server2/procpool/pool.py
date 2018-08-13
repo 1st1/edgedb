@@ -18,89 +18,145 @@
 
 
 import asyncio
+import base64
 import os.path
+import pickle
 import sys
 
 from edb.server2 import taskgroup
 
 from . import amsg
-from . import worker
 
 
 PROCESS_INITIAL_RESPONSE_TIMEOUT = 10.0
+KILL_TIMEOUT = 10.0
+WORKER_MOD = __name__.rpartition('.')[0] + '.worker'
+
+
+class Worker:
+
+    def __init__(self, server, command_args):
+        self._server = server
+        self._command_args = command_args
+        self._proc = None
+        self._con = None
+
+    async def spawn(self):
+        if self._proc is not None:
+            self._proc.kill()
+            try:
+                await asyncio.wait_for(self._proc.wait(), KILL_TIMEOUT)
+            except Exception:
+                self._proc.terminate()
+                raise
+            finally:
+                self._proc = None
+
+        self._proc = await asyncio.create_subprocess_exec(*self._command_args)
+        try:
+            self._con = await asyncio.wait_for(
+                self._server.get_by_pid(self._proc.pid),
+                PROCESS_INITIAL_RESPONSE_TIMEOUT)
+        except Exception:
+            self._proc.kill()
+            raise
+
+    async def call(self, method_name, args):
+        if self._con.is_closed():
+            await self.spawn()
+
+        msg = pickle.dumps((method_name, args))
+        data = await self._con.request(msg)
+        return pickle.loads(data)
+
+    def close(self):
+        self._proc.kill()
 
 
 class Pool:
 
-    def __init__(self, worker_cls, worker_args, *,
-                 loop, capacity, runstate_dir, sockname):
+    def __init__(self, *, worker_cls, worker_args,
+                 loop, capacity, runstate_dir, name):
         self._worker_cls = worker_cls
         self._worker_args = worker_args
 
         self._loop = loop
         self._capacity = capacity
         self._runstate_dir = runstate_dir
-        self._poolsock_name = os.path.join(self._runstate_dir, sockname)
 
-        self._queue = asyncio.Queue(loop=loop, maxsize=capacity)
+        self._name = name
+        self._poolsock_name = os.path.join(
+            self._runstate_dir, f'{name}.socket')
+
+        self._workers_queue = asyncio.Queue(loop=loop)
+        self._watchers = []
+        self._workers = []
+
+        self._server = amsg.Server(self._poolsock_name, loop)
+
+        self._worker_command_args = [
+            sys.executable, '-m', WORKER_MOD,
+
+            '--cls-name',
+            f'{self._worker_cls.__module__}.{self._worker_cls.__name__}',
+
+            '--cls-args', base64.b64encode(pickle.dumps(self._worker_args)),
+            '--sockname', self._poolsock_name
+        ]
+
+    async def _spawn_worker(self):
+        worker = Worker(self._server, self._worker_command_args)
+        await worker.spawn()
+        self._workers.append(worker)
+        self._workers_queue.put_nowait(worker)
+
+    async def call(self, method_name, *args):
+        worker = await self._workers_queue.get()
+
+        try:
+            status, data = await worker.call(method_name, args)
+        finally:
+            self._workers_queue.put_nowait(worker)
+
+        if status == 0:
+            return data
+        else:
+            raise data
 
     async def start(self):
-        async with taskgroup.TaskGroup(name='pool-spawn') as g:
-            for i in range(self._capacity):
-                g.create_task(self.spawn_worker())
+        await self._server.start()
 
-    async def spawn_worker(self):
-        res = await self._tpl_con.send(('spawn',))
-        if res[0] != 'spawned':
-            raise RuntimeError(
-                f'unexpected response for "spawn" command: {res}')
-        pid = res[1]
         try:
-            con = await asyncio.wait_for(
-                self._hub.get_by_pid(pid),
-                timeout=PROCESS_INITIAL_RESPONSE_TIMEOUT)
-        except asyncio.TimeoutError:
-            raise RuntimeError('could not spawn compiler worker')
+            async with taskgroup.TaskGroup(
+                    name=f'{self._name}-pool-spawn') as g:
 
-        worker = Worker(self._queue, con)
-        self._workers.add(worker)
-        worker_task = self._loop.create_task(worker.run())
-        worker_task.add_done_callback(
-            lambda task: self._on_worker_done(task, worker))
+                for i in range(self._capacity):
+                    g.create_task(self._spawn_worker())
 
-    def _on_worker_done(self, task, worker):
-        if self._closing:
-            return
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc is not None:
-            self._workers.discard(worker)
-            self._loop.create_task(self.spawn_worker())
-
-    async def send(self, msg):
-        fut = self._loop.create_future()
-        await self._queue.put((fut, msg))
-        return await fut
+        except taskgroup.TaskGroupError:
+            await self.stop()
+            raise
 
     async def stop(self):
-        self._closing = True
-
-        await self._hub.stop()
+        await self._server.stop()
 
         for worker in self._workers:
-            worker.stop()
-        self._workers = None
+            worker.close()
 
-        if self._tpl_proc is not None and self._tpl_proc.returncode is None:
-            self._tpl_proc.terminate()
+        self._workers = []
 
 
-async def create_pool(*, capacity: int, runstate_dir: str):
+async def create_pool(*, capacity: int, runstate_dir: str, name: str,
+                      worker_cls: type, worker_args: tuple):
     loop = asyncio.get_running_loop()
-    pool = CompilerPool(
+    pool = Pool(
         loop=loop,
         capacity=capacity,
-        runstate_dir=runstate_dir)
+        runstate_dir=runstate_dir,
+        worker_cls=worker_cls,
+        worker_args=worker_args,
+        name=name)
+
     await pool.start()
     return pool
+

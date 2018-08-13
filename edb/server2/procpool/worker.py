@@ -18,138 +18,86 @@
 
 
 import argparse
-import gc
-import os
+import asyncio
+import importlib
+import base64
 import pickle
-import socket
-import struct
+import traceback
 
-import setproctitle
+import uvloop
 
-
-_len_unpacker = struct.Struct('!I').unpack
-_len_packer = struct.Struct('!I').pack
+from . import amsg
 
 
-class _Spawn(Exception):
-    pass
+async def run_worker(cls_name, cls_args, sockname):
+    args = pickle.loads(base64.b64decode(cls_args))
+    mod_name, _, cls_name = cls_name.rpartition('.')
+    mod = importlib.import_module(mod_name)
+    cls = getattr(mod, cls_name)
 
+    con = await amsg.worker_connect(sockname)
+    worker = cls(*args)
 
-class BaseWorker:
-    def __init__(self, sockname):
-        self._sock = None
-        self._sockname = sockname
-
-    def _sock_recvall(self, size):
-        data = b''
-        to_recv = size
-        while to_recv:
-            block = self._sock.recv(to_recv)
-            if not block:
-                raise ConnectionAbortedError
-            data += block
-            to_recv -= len(block)
-        return data
-
-    def recv_msg(self):
-        payload_len = _len_unpacker(self._sock_recvall(4))[0]
-        return pickle.loads(self._sock_recvall(payload_len))
-
-    def send_msg(self, msg):
-        payload = pickle.dumps(msg)
-        payload = _len_packer(len(payload)) + payload
-        self._sock.sendall(payload)
-
-    def connect(self):
-        assert self._sock is None
-        self._sock = socket.socket(socket.AF_UNIX)
-        self._sock.connect(self._sockname)
-        self._sock.sendall(struct.pack('!i', os.getpid()))
-        if self._sock_recvall(1) != b'\x01':
-            exit(1)
-
-    def listen(self):
-        self.on_listen()
+    while True:
+        req = await con.next_request()
 
         try:
-            while True:
-                incoming = self.recv_msg()
-                outgoing = self.on_message(incoming)
-                self.send_msg(outgoing)
-        except _Spawn:
-            self._sock.close()
-            self._sock = None
-            raise
-
-    def on_listen(self):
-        pass
-
-    def on_message(self, msg):
-        raise NotImplementedError
-
-
-class TemplateWorker(BaseWorker):
-
-    def on_listen(self):
-        setproctitle.setproctitle('edgedb-template')
-
-        gc.collect()
-        gc.collect()
-        gc.collect()
-        gc.freeze()
-
-    def on_message(self, msg):
-        mtype = msg[0]
-
-        if mtype == 'spawn':
-            pid = os.fork()
-            if pid:
-                # parent
-                return ('spawned', pid)
-            else:
-                # child
-                raise _Spawn
+            methname, args = pickle.loads(req)
+        except Exception as ex:
+            ex = _filter_error(ex)
+            data = (1, ex)
         else:
-            raise RuntimeError(f'template worker: unknown message {mtype}')
+            meth = getattr(worker, methname)
 
+            try:
+                res = await meth(*args)
+                data = (0, res)
+            except Exception as ex:
+                ex = _filter_error(ex)
+                data = (1, ex)
 
-class CompileWorker(BaseWorker):
+        try:
+            pickled = pickle.dumps(data)
+        except Exception as ex:
+            try:
+                ex_str = str(ex)
+            except Exception as ex2:
+                ex_str = f'{type(ex2).__name__}: cannot call ' \
+                         f'{type(ex).__name__}.__str__'
 
-    def on_listen(self):
-        setproctitle.setproctitle('edgedb-compiler')
+            data = RuntimeError(f'cannot pickle result: {ex_str}')
+            pickled = pickle.dumps((1, data))
 
-    def on_message(self, msg):
-        print('compile1!!', msg)
-        return [12]
+        await con.reply(pickled)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--control', type=str)
-    parser.add_argument('--type', type=str)
+    parser.add_argument('--cls-name')
+    parser.add_argument('--cls-args')
+    parser.add_argument('--sockname')
     args = parser.parse_args()
 
-    if args.type == 'template':
-        worker = TemplateWorker(args.control)
-    else:
-        raise RuntimeError(f'unknown worker type {args.type!r}')
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
-    worker.connect()
-
-    spawn = False
     try:
-        worker.listen()
-    except _Spawn:
-        spawn = True
+        asyncio.run(run_worker(args.cls_name, args.cls_args, args.sockname))
+    except amsg.PoolClosedError:
+        exit(0)
 
-    if spawn:
-        worker = CompileWorker(args.control)
-        worker.connect()
-        worker.listen()
+
+def _filter_error(er):
+    tb = ''.join(traceback.format_tb(er.__traceback__))
+    er.__text_traceback__ = tb
+    er.__traceback__ = None
+
+    if er.__cause__ is not None:
+        er.__cause__ = _filter_error(er.__cause__)
+    if er.__context__ is not None:
+        er.__context__ = _filter_error(er.__context__)
+
+    return er
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        exit(1)
+    main()

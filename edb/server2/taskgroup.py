@@ -266,6 +266,8 @@ class MultiError(Exception):
         if errors:
             types = set(type(e).__name__ for e in errors)
             msg = f'{msg}; {len(errors)} sub errors: ({", ".join(types)})'
+            for er in errors:
+                msg += f'\n * {type(er).__name__}: {er}'
         super().__init__(msg, *args)
         self.__errors__ = tuple(errors)
 
