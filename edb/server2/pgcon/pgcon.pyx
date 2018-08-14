@@ -34,7 +34,6 @@ cdef class PGProto(CorePGProto):
         self.cancel_sent_waiter = None
 
         self.address = addr
-        # self.settings = ConnectionSettings((self.address, con_params.database))
 
         self.return_extra = False
 
@@ -43,8 +42,6 @@ cdef class PGProto(CorePGProto):
         self.closing = False
         self.is_reading = True
 
-        self.timeout_handle = None
-        self.timeout_callback = self._on_timeout
         self.completed_callback = self._on_waiter_completed
 
         self.queries_count = 0
@@ -54,9 +51,6 @@ cdef class PGProto(CorePGProto):
 
     def get_server_pid(self):
         return self.backend_pid
-
-    # def get_settings(self):
-    #     return self.settings
 
     def is_in_transaction(self):
         # PQTRANS_INTRANS = idle, within transaction block
@@ -74,28 +68,7 @@ cdef class PGProto(CorePGProto):
             self.transport.pause_reading()
 
     @cython.iterable_coroutine
-    async def simple_query(self, bytes query, timeout):
-        if self.cancel_waiter is not None:
-            await self.cancel_waiter
-        if self.cancel_sent_waiter is not None:
-            await self.cancel_sent_waiter
-            self.cancel_sent_waiter = None
-
-        self._check_state()
-        timeout = self._get_timeout_impl(timeout)
-
-        waiter = self._new_waiter(timeout)
-        try:
-            self._simple_query(query)  # network op
-            self.last_query = query
-        except Exception as ex:
-            waiter.set_exception(ex)
-            self._coreproto_error()
-        finally:
-            return await waiter
-
-    @cython.iterable_coroutine
-    async def execute_anonymous(self, bytes query, bytes bind_data, timeout):
+    async def execute_anonymous(self, bytes query, bytes bind_data):
         if self.cancel_waiter is not None:
             await self.cancel_waiter
         if self.cancel_sent_waiter is not None:
@@ -106,9 +79,8 @@ cdef class PGProto(CorePGProto):
             bind_data = b''
 
         self._check_state()
-        timeout = self._get_timeout_impl(timeout)
 
-        waiter = self._new_waiter(timeout)
+        waiter = self._new_waiter()
         try:
             self._execute_anonymous(query, bind_data)  # network op
             self.last_query = query
@@ -133,7 +105,7 @@ cdef class PGProto(CorePGProto):
         self.transport.abort()
 
     @cython.iterable_coroutine
-    async def close(self, timeout):
+    async def close(self):
         if self.closing:
             return
 
@@ -156,11 +128,9 @@ cdef class PGProto(CorePGProto):
 
         assert self.waiter is None
 
-        timeout = self._get_timeout_impl(timeout)
-
         # Ask the server to terminate the connection and wait for it
         # to drop.
-        self.waiter = self._new_waiter(timeout)
+        self.waiter = self._new_waiter()
         self._terminate()
         try:
             await self.waiter
@@ -179,21 +149,10 @@ cdef class PGProto(CorePGProto):
         self.connection._cancel_current_command(self.cancel_sent_waiter)
         self._set_state(PGPROTO_CANCELLED)
 
-    def _on_timeout(self, fut):
-        if self.waiter is not fut or fut.done() or \
-                self.cancel_waiter is not None or \
-                self.timeout_handle is None:
-            return
-        self._request_cancel()
-        self.waiter.set_exception(asyncio.TimeoutError())
-
     def _on_waiter_completed(self, fut):
         if fut is not self.waiter or self.cancel_waiter is not None:
             return
         if fut.cancelled():
-            if self.timeout_handle:
-                self.timeout_handle.cancel()
-                self.timeout_handle = None
             self._request_cancel()
 
     cdef _handle_waiter_on_connection_lost(self, cause):
@@ -206,35 +165,6 @@ cdef class PGProto(CorePGProto):
             self.waiter.set_exception(exc)
         self.waiter = None
 
-    # cdef _set_server_parameter(self, name, val):
-    #     self.settings.add_setting(name, val)
-
-    def _get_timeout(self, timeout):
-        if timeout is not None:
-            try:
-                if type(timeout) is bool:
-                    raise ValueError
-                timeout = float(timeout)
-            except ValueError:
-                raise ValueError(
-                    'invalid timeout value: expected non-negative float '
-                    '(got {!r})'.format(timeout)) from None
-
-        return self._get_timeout_impl(timeout)
-
-    cdef inline _get_timeout_impl(self, timeout):
-        return None
-        # if timeout is None:
-        #     timeout = self.connection._config.command_timeout
-        # elif timeout is NO_TIMEOUT:
-        #     timeout = None
-        # else:
-        #     timeout = float(timeout)
-
-        # if timeout is not None and timeout <= 0:
-        #     raise asyncio.TimeoutError()
-        # return timeout
-
     cdef _check_state(self):
         if self.cancel_waiter is not None:
             raise RuntimeError(
@@ -242,7 +172,7 @@ cdef class PGProto(CorePGProto):
         if self.closing:
             raise RuntimeError(
                 'cannot perform operation: connection is closed')
-        if self.waiter is not None or self.timeout_handle is not None:
+        if self.waiter is not None:
             raise RuntimeError(
                 'cannot perform operation: another operation is in progress')
 
@@ -271,14 +201,11 @@ cdef class PGProto(CorePGProto):
         finally:
             self.abort()
 
-    cdef _new_waiter(self, timeout):
+    cdef _new_waiter(self):
         if self.waiter is not None:
             raise RuntimeError(
                 'cannot perform operation: another operation is in progress')
         self.waiter = self.loop.create_future()
-        if timeout is not None:
-            self.timeout_handle = self.connection._loop.call_later(
-                timeout, self.timeout_callback, self.waiter)
         self.waiter.add_done_callback(self.completed_callback)
         return self.waiter
 
@@ -334,10 +261,6 @@ cdef class PGProto(CorePGProto):
             waiter.set_exception(exc)
 
     cdef _on_result(self):
-        if self.timeout_handle is not None:
-            self.timeout_handle.cancel()
-            self.timeout_handle = None
-
         if self.cancel_waiter is not None:
             # We have received the result of a cancelled command.
             if not self.cancel_waiter.done():

@@ -23,7 +23,9 @@ __all__ = 'create_pool',
 import asyncio
 import collections
 import dataclasses
+import enum
 import struct
+import typing
 import uuid
 
 import asyncpg
@@ -50,8 +52,24 @@ class Database:
     schema: object
 
 
+class QueryType(enum.IntEnum):
+
+    QUERY = 1
+    DDL = 2
+    DB = 3
+    DELTA = 4
+    SESSION_STATE = 5
+
+    TX_START = 10
+    TX_COMMIT = 11
+    TX_ROLLBACK = 12
+
+
 @dataclasses.dataclass(frozen=True)
 class CompiledQuery:
+
+    dbver: int
+    type: QueryType
 
     out_type_data: bytes
     out_type_id: bytes
@@ -59,6 +77,13 @@ class CompiledQuery:
     in_type_id: bytes
 
     sql: bytes
+
+
+@dataclasses.dataclass(frozen=True)
+class CompiledQuerySet:
+
+    dbver: int
+    sql: typing.List[bytes]
 
 
 _uint16_packer = struct.Struct('!H').pack
@@ -319,7 +344,9 @@ class Compiler:
             raise RuntimeError(
                 f'expected one statement, got {len(statements)}')
         stmt = statements[0]
+        return self._compile_stmt(db, stmt)
 
+    def _compile_stmt(self, db, stmt):
         ir = ql_compiler.compile_ast_to_ir(
             stmt,
             schema=db.schema,
@@ -355,6 +382,8 @@ class Compiler:
             db, params_type, {})
 
         return CompiledQuery(
+            0,
+            QueryType.QUERY,
             out_type_data, out_type_id.bytes,
             in_type_data, in_type_id.bytes,
             sql_text.encode(defines.EDGEDB_ENCODING))
