@@ -417,11 +417,6 @@ cdef class CorePGProto:
         buf.write_str('database', self.encoding)
         buf.write_str(self.con_params.database, self.encoding)
 
-        # if self.con_params.server_settings is not None:
-        #     for k, v in self.con_params.server_settings.items():
-        #         buf.write_str(k, self.encoding)
-        #         buf.write_str(v, self.encoding)
-
         buf.write_bytestring(b'')
 
         # Send the buffer

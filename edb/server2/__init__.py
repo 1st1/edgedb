@@ -90,12 +90,7 @@ class Server(core.CoreServer):
         #     callback(None)
 
     async def compile_edgeql(self, dbname, eql):
-        import time
-        st = time.monotonic()
-        query = await self._cpool.call('compile_edgeql', dbname, eql)
-        print(query)
-        print(f'compile {eql} {time.monotonic() - st:.3f} sec')
-        return query
+        return await self._cpool.call('compile_edgeql', dbname, eql)
 
     async def _parse(self, dbname, stmt_name, query, callback):
         try:
@@ -122,7 +117,7 @@ class Server(core.CoreServer):
         try:
             await con_fut
 
-            data = await pr.execute_anonymous(query.sql, bind_args, None)
+            data = await pr.execute_anonymous(query.sql, bind_args)
             con._on_server_execute_data(data)
         finally:
             tr.abort()
@@ -133,13 +128,13 @@ class Server(core.CoreServer):
         port = ca.get('port', '')
         p = PGConParams(con.get_user(), '', con.get_dbname())
 
-        db = self._databases[con.get_dbname()]
+        addr = os.path.join(host, f'.s.PGSQL.{port}')
 
         con_fut = self._loop.create_future()
 
         tr, pr = await self._loop.create_unix_connection(
             lambda: core.PGProto(f'{host}:{port}', con_fut, p, self._loop),
-            db.addr)
+            addr)
 
         try:
             await con_fut

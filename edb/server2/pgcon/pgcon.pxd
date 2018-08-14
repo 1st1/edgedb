@@ -30,8 +30,6 @@ cdef class PGProto(CorePGProto):
         object waiter
         bint return_extra
         object create_future
-        object timeout_handle
-        object timeout_callback
         object completed_callback
         object connection
         bint is_reading
@@ -42,9 +40,8 @@ cdef class PGProto(CorePGProto):
 
         readonly uint64_t queries_count
 
-    cdef _get_timeout_impl(self, timeout)
     cdef _check_state(self)
-    cdef _new_waiter(self, timeout)
+    cdef _new_waiter(self)
     cdef _coreproto_error(self)
 
     cdef _on_result__connect(self, object waiter)

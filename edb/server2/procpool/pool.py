@@ -45,13 +45,13 @@ class Worker:
         try:
             proc.kill()
         except ProcessLookupError:
-            pass
-        else:
-            try:
-                await asyncio.wait_for(proc.wait(), KILL_TIMEOUT)
-            except Exception:
-                proc.terminate()
-                raise
+            return
+
+        try:
+            await asyncio.wait_for(proc.wait(), KILL_TIMEOUT)
+        except Exception:
+            proc.terminate()
+            raise
 
     async def spawn(self):
         if self._proc is not None:
