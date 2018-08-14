@@ -430,17 +430,17 @@ cdef class CorePGProto:
         outbuf.write_buffer(buf)
         self._write(outbuf)
 
-    cdef _simple_query(self, str query):
+    cdef _simple_query(self, bytes query):
         cdef WriteBuffer buf
 
         self._ensure_connected()
         self._set_state(PGPROTO_SIMPLE_QUERY)
 
         buf = WriteBuffer.new_message(b'Q')
-        buf.write_str(query, self.encoding)
+        buf.write_bytestring(query)
         self._write(buf.end_message())
 
-    cdef _execute_anonymous(self, str query, bytes bind_data):
+    cdef _execute_anonymous(self, bytes query, bytes bind_data):
         cdef:
             WriteBuffer packet
             WriteBuffer buf
@@ -452,7 +452,7 @@ cdef class CorePGProto:
 
         buf = WriteBuffer.new_message(b'P')
         buf.write_bytestring(b'')  # statement name
-        buf.write_str(query, self.encoding)
+        buf.write_bytestring(query)
         buf.write_int16(0)
         packet.write_buffer(buf.end_message())
 

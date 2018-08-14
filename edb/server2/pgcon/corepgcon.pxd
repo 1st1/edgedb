@@ -131,9 +131,9 @@ cdef class CorePGProto:
 
 
     cdef _connect(self)
-    cdef _execute_anonymous(self, str query, bytes bind_data)
+    cdef _execute_anonymous(self, bytes query, bytes bind_data)
 
-    cdef _simple_query(self, str query)
+    cdef _simple_query(self, bytes query)
     cdef _process__simple_query(self, char mtype)
 
     cdef _terminate(self)
