@@ -32,7 +32,6 @@ cdef enum PGProtocolState:
 
     PGPROTO_AUTH = 10
     PGPROTO_EXECUTE_ANONYMOUS = 11
-    PGPROTO_SIMPLE_QUERY = 12
 
 
 cdef enum PGResultType:
@@ -132,9 +131,6 @@ cdef class CorePGProto:
 
     cdef _connect(self)
     cdef _execute_anonymous(self, bytes query, bytes bind_data)
-
-    cdef _simple_query(self, bytes query)
-    cdef _process__simple_query(self, char mtype)
 
     cdef _terminate(self)
 

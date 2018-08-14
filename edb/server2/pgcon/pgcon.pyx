@@ -215,9 +215,6 @@ cdef class PGProto(CorePGProto):
     cdef _on_result__execute_anonymous(self, object waiter):
         waiter.set_result(bytes(self.result_data))
 
-    cdef _on_result__simple_query(self, object waiter):
-        waiter.set_result(self.result_status_msg)
-
     cdef _dispatch_result(self):
         waiter = self.waiter
         self.waiter = None
@@ -248,9 +245,6 @@ cdef class PGProto(CorePGProto):
 
             elif self.state == PGPROTO_EXECUTE_ANONYMOUS:
                 self._on_result__execute_anonymous(waiter)
-
-            elif self.state == PGPROTO_SIMPLE_QUERY:
-                self._on_result__simple_query(waiter)
 
             else:
                 raise RuntimeError(
