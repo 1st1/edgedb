@@ -35,11 +35,6 @@ cdef class CorePGProto:
 
         self._skip_discard = False
 
-        # executemany support data
-        self._execute_iter = None
-        self._execute_portal_name = None
-        self._execute_stmt_name = None
-
         self._reset_result()
 
     cdef _write(self, buf):
