@@ -41,16 +41,22 @@ class Worker:
         self._proc = None
         self._con = None
 
+    async def _kill_proc(self, proc):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        else:
+            try:
+                await asyncio.wait_for(proc.wait(), KILL_TIMEOUT)
+            except Exception:
+                proc.terminate()
+                raise
+
     async def spawn(self):
         if self._proc is not None:
-            self._proc.kill()
-            try:
-                await asyncio.wait_for(self._proc.wait(), KILL_TIMEOUT)
-            except Exception:
-                self._proc.terminate()
-                raise
-            finally:
-                self._proc = None
+            asyncio.create_task(self._kill_proc(self._proc))
+            self._proc = None
 
         self._proc = await asyncio.create_subprocess_exec(*self._command_args)
         try:
@@ -159,4 +165,3 @@ async def create_pool(*, capacity: int, runstate_dir: str, name: str,
 
     await pool.start()
     return pool
-

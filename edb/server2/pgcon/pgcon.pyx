@@ -74,7 +74,7 @@ cdef class PGProto(CorePGProto):
             self.transport.pause_reading()
 
     @cython.iterable_coroutine
-    async def simple_query(self, str query, timeout):
+    async def simple_query(self, bytes query, timeout):
         if self.cancel_waiter is not None:
             await self.cancel_waiter
         if self.cancel_sent_waiter is not None:
@@ -95,7 +95,7 @@ cdef class PGProto(CorePGProto):
             return await waiter
 
     @cython.iterable_coroutine
-    async def execute_anonymous(self, str query, bytes bind_data, timeout):
+    async def execute_anonymous(self, bytes query, bytes bind_data, timeout):
         if self.cancel_waiter is not None:
             await self.cancel_waiter
         if self.cancel_sent_waiter is not None:

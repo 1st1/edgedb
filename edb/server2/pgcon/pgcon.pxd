@@ -36,7 +36,7 @@ cdef class PGProto(CorePGProto):
         object connection
         bint is_reading
 
-        str last_query
+        bytes last_query
 
         bint closing
 
