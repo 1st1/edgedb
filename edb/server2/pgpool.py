@@ -20,38 +20,8 @@
 import asyncio
 import collections
 
-
 from . import taskgroup
 # from . import coreserver as core
-
-
-class ConnectionHolder:
-
-    def __init__(self, pool):
-        self._con = None
-        self._user = None
-        self._password = None
-        self._pool = pool
-
-    async def connect(self, dbname, user, password):
-        self._con = await self._connect(dbname, user, password)
-        self._user = user
-        self._password = password
-
-    async def clear(self):
-        if self._con is not None:
-            try:
-                await self._con.close()
-            finally:
-                self._user = None
-                self._password = None
-                self._con = None
-
-    def connected(self):
-        return self._con is None
-
-    async def _connect(self, dbname, user, password):
-        raise NotImplementedError
 
 
 class MappedDeque:
@@ -87,6 +57,9 @@ class MappedDeque:
     def popleft(self):
         item, _ = self._list.popitem(last=False)
         return item
+
+    def popleftitem(self):
+        return self._list.popitem(last=False)
 
     def __len__(self):
         return len(self._list)
@@ -139,7 +112,7 @@ class LRUIndex:
             del self._index[key]
         return o
 
-    def put(self, key, o):
+    def append(self, key, o):
         if o in self._lru_list:
             raise ValueError(f'{key!r}:{o!r} is already in the index {self!r}')
         try:
@@ -149,6 +122,17 @@ class LRUIndex:
 
         items.append(o)
         self._lru_list.append(o, key)
+
+    def popleft(self):
+        o, key = self._lru_list.popleftitem()
+
+        items = self._index[key]
+        items.discard(o)
+
+        if not items:
+            del self._index[key]
+
+        return o
 
     def discard(self, o):
         try:
@@ -172,13 +156,56 @@ class LRUIndex:
         return iter(self._lru_list)
 
 
+class BaseConnectionHolder:
+
+    def __init__(self, pool):
+        self._con = None
+        self._dbname = None
+        self._user = None
+        self._password = None
+        self._pool = pool
+
+    async def connect(self, dbname, user, password):
+        if self.connected():
+            raise RuntimeError(
+                f'cannot connect connection holder to ({dbname!r}, {user!r}) '
+                f'as it is already connected to ({self._dbname!r}, '
+                f'{self._user})')
+
+        self._con = await self._connect(dbname, user, password)
+        self._dbname = dbname
+        self._user = user
+        self._password = password
+
+    async def clear(self):
+        if self._con is not None:
+            try:
+                await self._close(self._con)
+            finally:
+                self._user = None
+                self._password = None
+                self._con = None
+
+    def connected(self):
+        return self._con is not None
+
+    def key(self):
+        return (self._dbname, self._user)
+
+    async def _connect(self, dbname, user, password):
+        raise NotImplementedError
+
+    async def _close(self, con):
+        raise NotImplementedError
+
+
 class BasePool:
 
     def __init__(self, *, capacity, concurrency, loop):
-        if concurrency <= capacity:
+        if concurrency >= capacity:
             raise RuntimeError(
                 f'{type(self).__name__} expects capacity {capacity} to be '
-                f'less than concurrency {concurrency}')
+                f'greater than concurrency {concurrency}')
         self._capacity = capacity
         self._concurrency = concurrency
 
@@ -188,6 +215,7 @@ class BasePool:
         self._holders = [self._new_holder() for _ in range(capacity)]
         self._empty_holders = collections.deque(self._holders)
         self._unused_holders = LRUIndex()
+        self._used_holders = set()
 
         self._lock = asyncio.BoundedSemaphore(loop=loop, value=concurrency)
 
@@ -197,20 +225,27 @@ class BasePool:
     async def acquire(self, dbname, user, password):
         await self._lock.acquire()
         try:
-            holder = await self._acquire(dbname, user)
+            holder = await self._acquire(dbname, user, password)
             if not holder.connected():
                 raise RuntimeError('connection holder is not connected')
+            if holder in self._used_holders:
+                raise RuntimeError('a holder was not properly released')
         except Exception:
             self._lock.release()
             raise
         else:
+            self._used_holders.add(holder)
             return holder
 
-    async def _acquire(self, dbname, user, password) -> ConnectionHolder:
+    async def _acquire(self, dbname, user, password) -> BaseConnectionHolder:
         du = (dbname, user)
-        holder = self._unused_holders_index.pop(du)
+        holder = self._unused_holders.pop(du)
         if holder is not None:
             return holder
+
+        # So there are no currently unused connections to (dbname, user);
+        # let's check if we have an empty holder that we can start
+        # using.
 
         if self._empty_holders:
             holder = self._empty_holders.popleft()
@@ -221,24 +256,53 @@ class BasePool:
                 raise
             return holder
 
-        holder = self._lru_holders.popleft()
-        if holder.connected():
-            if not self._holders_index_du.pop_specific(holder.key(), holder):
-                1 / 0
-            await holder.clear()
+        # There are no empty holders.  Let's pop the least used
+        # "unused connection", close its connection, and make a
+        # new connection to (dbname, user).
+
+        # Since concurrency must be greater than capacity (enforced
+        # in __init__ and protected by a semaphore), we must have
+        # some currently unused connection holders.
+        assert self._unused_holders.count() > 0
+
+        holder = self._unused_holders.popleft()
         try:
+            await holder.clear()
             await holder.connect(dbname, user, password)
         except Exception:
             self._empty_holders.append(holder)
             raise
-        return holder
+        else:
+            return holder
 
-    async def release(self, holder: ConnectionHolder):
+    async def release(self, holder: BaseConnectionHolder):
+        if holder not in self._used_holders:
+            raise RuntimeError(
+                'unable to release a holder that was not previously acquired')
+        self._used_holders.discard(holder)
+        self._unused_holders.append(holder.key(), holder)
         self._lock.release()
-        self._holders_index_du.put(holder.key(), holder)
-        self._lru_holders.append(holder)
 
     async def close(self):
         async with taskgroup.TaskGroup() as g:
+            for _ in range(self._concurrency):
+                g.create_task(self._lock.acquire())
+
+        async with taskgroup.TaskGroup() as g:
             for holder in self._holders:
-                g.create_task(holder.close())
+                g.create_task(holder.clear())
+
+
+class PGConnectionHolder(BaseConnectionHolder):
+
+    async def _connect(self, dbname, user, password):
+        raise NotImplementedError
+
+    async def _close(self, con):
+        raise NotImplementedError
+
+
+class PGPool(BasePool):
+
+    def _new_holder(self):
+        return PGConnectionHolder(self)
