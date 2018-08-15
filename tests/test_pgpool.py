@@ -17,8 +17,15 @@
 #
 
 
+import dataclasses
+
 from edb.server2 import pgpool
 from edb.server import _testbase as tb
+
+
+@dataclasses.dataclass(frozen=True)
+class Named:
+    name: str
 
 
 class TestLRUIndex(tb.TestCase):
@@ -55,9 +62,9 @@ class TestLRUIndex(tb.TestCase):
         idx.put(2, '22')
         idx.put(1, '111')
 
-        self.assertTrue(idx.unref('11'))
-        self.assertFalse(idx.unref('11'))
-        self.assertFalse(idx.unref('11'))
+        self.assertTrue(idx.discard('11'))
+        self.assertFalse(idx.discard('11'))
+        self.assertFalse(idx.discard('11'))
 
         self.assertEqual(idx.pop(1), '111')
         self.assertEqual(idx.pop(2), '22')
@@ -84,8 +91,8 @@ class TestLRUIndex(tb.TestCase):
         with self.assertRaisesRegex(ValueError, 'already in the index'):
             idx.put(1, o1)
 
-        self.assertTrue(idx.unref(o1))
-        self.assertFalse(idx.unref(o1))
+        self.assertTrue(idx.discard(o1))
+        self.assertFalse(idx.discard(o1))
 
         idx.put(1, o1)
         self.assertIs(idx.pop(1), o1)
@@ -93,7 +100,53 @@ class TestLRUIndex(tb.TestCase):
 
         self.assertEqual(idx._index, {})
 
-        self.assertFalse(idx.unref(o1))
+        self.assertFalse(idx.discard(o1))
+
+    def test_lru_index_4(self):
+        idx = pgpool.LRUIndex()
+
+        o1 = Named('o1')
+        o11 = Named('o11')
+        o111 = Named('o111')
+        o2 = Named('o2')
+
+        idx.put(1, o1)
+        idx.put(1, o11)
+        idx.put(1, o111)
+        idx.put(2, o2)
+
+        self.assertEqual(list(idx.lru()), [o1, o11, o111, o2])
+        self.assertEqual(idx.count(), 4)
+
+        self.assertIs(idx.pop(1), o111)
+        self.assertIs(idx.pop(1), o11)
+        self.assertIs(idx.pop(2), o2)
+        self.assertEqual(list(idx.lru()), [o1])
+        self.assertEqual(idx.count(), 1)
+
+        idx.put(1, o111)
+        idx.put(1, o11)
+
+        self.assertEqual(list(idx.lru()), [o1, o111, o11])
+        self.assertEqual(idx.count(), 3)
+
+        idx.put(2, o2)
+
+        self.assertIs(idx.pop(1), o11)
+        self.assertEqual(list(idx.lru()), [o1, o111, o2])
+        self.assertEqual(idx.count(), 3)
+
+        idx.discard(o111)
+        self.assertEqual(list(idx.lru()), [o1, o2])
+        self.assertEqual(idx.count(), 2)
+
+        self.assertIs(idx.pop(1), o1)
+        self.assertEqual(list(idx.lru()), [o2])
+        self.assertEqual(idx.count(), 1)
+
+        self.assertIs(idx.pop(2), o2)
+        self.assertEqual(list(idx.lru()), [])
+        self.assertEqual(idx.count(), 0)
 
 
 class TestMappedDeque(tb.TestCase):
@@ -116,6 +169,9 @@ class TestMappedDeque(tb.TestCase):
         lst.discard(o2)
         self.assertEqual(list(lst), [o1, o3, o4])
 
+        self.assertIn(o1, lst)
+        self.assertNotIn(o2, lst)
+
         self.assertIs(lst.popleft(), o1)
         self.assertEqual(list(lst), [o3, o4])
 
@@ -132,12 +188,17 @@ class TestMappedDeque(tb.TestCase):
         self.assertTrue(bool(lst))
 
         self.assertIs(lst.popleft(), o3)
-        self.assertIs(lst.popleft(), o4)
-        self.assertIs(lst.popleft(), o1)
+        self.assertIs(lst.pop(), o1)
+        self.assertIs(lst.pop(), o4)
 
         self.assertEqual(list(lst), [])
         self.assertEqual(len(lst), 0)
         self.assertFalse(bool(lst))
+
+        with self.assertRaises(KeyError):
+            lst.pop()
+        with self.assertRaises(KeyError):
+            lst.popleft()
 
     def test_mapped_deque_2(self):
         orig = [1, 2, 3]
@@ -145,3 +206,8 @@ class TestMappedDeque(tb.TestCase):
         self.assertEqual(list(lst), [1, 2, 3])
         orig.pop()
         self.assertEqual(list(lst), [1, 2, 3])
+
+    def test_mapped_deque_3(self):
+        lst = pgpool.MappedDeque()
+        lst.append(1, '1')
+        self.assertEqual(lst[1], '1')
