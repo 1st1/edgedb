@@ -63,16 +63,26 @@ class MappedDeque:
             for el in source:
                 self._list[el] = True
 
+    def __contains__(self, item):
+        return item in self._list
+
+    def __getitem__(self, item):
+        return self._list[item]
+
     def discard(self, item):
         try:
             self._list.pop(item)
         except KeyError:
             raise LookupError(f'{item!r} is not in {self!r}') from None
 
-    def append(self, item):
+    def append(self, item, val=None):
         if item in self._list:
             raise ValueError(f'{item!r} is already in the list {self!r}')
-        self._list[item] = True
+        self._list[item] = val
+
+    def pop(self):
+        item, _ = self._list.popitem(last=True)
+        return item
 
     def popleft(self):
         item, _ = self._list.popitem(last=False)
@@ -92,7 +102,7 @@ class MappedDeque:
 
 
 class LRUIndex:
-    """A multidict-like mapping.
+    """A multidict-like mapping with internal LRU lists.
 
     Key properties:
 
@@ -102,15 +112,19 @@ class LRUIndex:
       if two different keys point to one object, or of one object is
       referenced by the same key more than once.
 
-    * Every key maps to a LIFO list of values internally.  LIFO
+    * Every key maps to a LIFO list of objects internally.  LIFO
       is essential to make the global LRU list of connections work:
       if a DB has too many open connections some of them will become
       unused for long enough period of time to be closed.
+
+    * There's a global LIFO list of objects, accessible via the
+      "lru()" method.  The "count()" method returns the total number
+      of objects in the index.
     """
 
     def __init__(self):
         self._index = {}
-        self._unique = {}
+        self._lru_list = MappedDeque()
 
     def pop(self, key):
         try:
@@ -119,34 +133,43 @@ class LRUIndex:
             return None
 
         o = items.pop()
-        self._unique.pop(o)
+        self._lru_list.discard(o)
+
         if not items:
             del self._index[key]
         return o
 
     def put(self, key, o):
-        if o in self._unique:
+        if o in self._lru_list:
             raise ValueError(f'{key!r}:{o!r} is already in the index {self!r}')
         try:
             items = self._index[key]
         except KeyError:
-            items = self._index[key] = collections.deque()
-        items.append(o)
-        self._unique[o] = key
+            items = self._index[key] = MappedDeque()
 
-    def unref(self, o):
+        items.append(o)
+        self._lru_list.append(o, key)
+
+    def discard(self, o):
         try:
-            key = self._unique.pop(o)
+            key = self._lru_list[o]
         except KeyError:
             return False
 
         items = self._index[key]
-        items.remove(o)  # an O(n) but should be pretty rare
+        items.discard(o)
+        self._lru_list.discard(o)
 
         if not items:
             del self._index[key]
 
         return True
+
+    def count(self):
+        return len(self._lru_list)
+
+    def lru(self):
+        return iter(self._lru_list)
 
 
 class BasePool:
@@ -164,8 +187,7 @@ class BasePool:
 
         self._holders = [self._new_holder() for _ in range(capacity)]
         self._empty_holders = collections.deque(self._holders)
-        self._lru_holders = MappedDeque(self._holders)
-        self._holders_index_du = LRUIndex()
+        self._unused_holders = LRUIndex()
 
         self._lock = asyncio.BoundedSemaphore(loop=loop, value=concurrency)
 
@@ -178,14 +200,15 @@ class BasePool:
             holder = await self._acquire(dbname, user)
             if not holder.connected():
                 raise RuntimeError('connection holder is not connected')
-            return holder
         except Exception:
             self._lock.release()
             raise
+        else:
+            return holder
 
     async def _acquire(self, dbname, user, password) -> ConnectionHolder:
         du = (dbname, user)
-        holder = self._holders_index_du.pop(du)
+        holder = self._unused_holders_index.pop(du)
         if holder is not None:
             return holder
 
