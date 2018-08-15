@@ -44,6 +44,7 @@ class BaseFramedProtocol(asyncio.Protocol):
         raise NotImplementedError
 
     def data_received(self, data):
+        # TODO: rewrite to avoid buffer copies.
         self._buffer += data
         while self._buffer:
             if self._curmsg_len == -1:
