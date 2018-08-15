@@ -58,10 +58,10 @@ class MappedDeque:
     """A deque-like object with an O(1) discard operation."""
 
     def __init__(self, source=None):
-        self._list = collections.OrderedDict()
-        if source is not None:
-            for el in source:
-                self._list[el] = True
+        if source is None:
+            self._list = collections.OrderedDict()
+        else:
+            self._list = collections.OrderedDict.fromkeys(source)
 
     def __contains__(self, item):
         return item in self._list
