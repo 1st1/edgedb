@@ -32,6 +32,10 @@ class Named:
     name: str
 
 
+class TestExc(Exception):
+    pass
+
+
 class TestLRUIndex(tb.TestCase):
 
     def test_lru_index_1(self):
@@ -43,6 +47,8 @@ class TestLRUIndex(tb.TestCase):
         idx.append(2, '22')
         idx.append(1, '111')
 
+        self.assertEqual(idx.count_keys(), 2)
+
         self.assertEqual(idx.pop(1), '111')
         self.assertEqual(idx.pop(1), '11')
         self.assertEqual(idx.pop(2), '22')
@@ -50,12 +56,14 @@ class TestLRUIndex(tb.TestCase):
         idx.append(1, '11')
         self.assertEqual(idx.pop(1), '11')
         self.assertEqual(idx.pop(2), '2')
+        self.assertEqual(idx.count_keys(), 1)
         self.assertEqual(idx.pop(1), '1')
+        self.assertEqual(idx.count_keys(), 0)
 
         self.assertIsNone(idx.pop(2))
         self.assertIsNone(idx.pop(1))
 
-        self.assertEqual(idx._index, {})
+        self.assertEqual(idx.count_keys(), 0)
 
     def test_lru_index_2(self):
         idx = pgpool.LRUIndex()
@@ -81,7 +89,7 @@ class TestLRUIndex(tb.TestCase):
         self.assertIsNone(idx.pop(2))
         self.assertIsNone(idx.pop(1))
 
-        self.assertEqual(idx._index, {})
+        self.assertEqual(idx.count_keys(), 0)
 
     def test_lru_index_3(self):
         idx = pgpool.LRUIndex()
@@ -102,7 +110,7 @@ class TestLRUIndex(tb.TestCase):
         self.assertIs(idx.pop(1), o1)
         self.assertIs(idx.pop(1), o11)
 
-        self.assertEqual(idx._index, {})
+        self.assertEqual(idx.count_keys(), 0)
 
         self.assertFalse(idx.discard(o1))
 
@@ -219,10 +227,10 @@ class TestMappedDeque(tb.TestCase):
 
 class TestBasePool(tb.TestCase):
 
-    async def run_monkey_test(self, *, capacity, concurrency, dbs, plan):
+    async def run_monkey_test(self, *, max_capacity, concurrency, dbs, plan):
         """Simulate load.
 
-        *capacity* is the capacity of the pool.
+        *max_capacity* is the max capacity of the pool.
 
         *concurrency* is the concurrency set for the pool.
 
@@ -307,7 +315,8 @@ class TestBasePool(tb.TestCase):
             return round(random.triangular(low, high, med))
 
         loop = asyncio.get_running_loop()
-        pool = TestPool(capacity=capacity, concurrency=concurrency, loop=loop)
+        pool = TestPool(max_capacity=max_capacity,
+                        concurrency=concurrency, loop=loop)
 
         queue = []
         for num, median in plan:
@@ -338,7 +347,7 @@ class TestBasePool(tb.TestCase):
         plan = [(100, 0.2), (100, 0.8)]
 
         connects = await self.run_monkey_test(
-            capacity=8, concurrency=4, plan=plan, dbs=dbs)
+            max_capacity=8, concurrency=4, plan=plan, dbs=dbs)
 
         # pool is big enough to keep all 4 connections alive for both DBs
         self.assertEqual(connects, [4, 4])
@@ -351,8 +360,11 @@ class TestBasePool(tb.TestCase):
 
         plan = [(100, 0.5)]
 
-        await self.run_monkey_test(
-            capacity=5, concurrency=4, plan=plan, dbs=dbs)
+        connects = await self.run_monkey_test(
+            max_capacity=5, concurrency=4, plan=plan, dbs=dbs)
+
+        self.assertGreater(connects[0], 4)
+        self.assertGreater(connects[1], 4)
 
     async def test_base_pgpool_monkey_3(self):
         dbs = [
@@ -369,14 +381,14 @@ class TestBasePool(tb.TestCase):
         plan = [(30, 0.1), (30, 0.8), (30, 0.2), (30, 0.6), (30, 1.0)]
 
         await self.run_monkey_test(
-            capacity=100, concurrency=4, plan=plan, dbs=dbs)
+            max_capacity=100, concurrency=4, plan=plan, dbs=dbs)
 
         await self.run_monkey_test(
-            capacity=11, concurrency=10, plan=plan, dbs=dbs)
+            max_capacity=11, concurrency=10, plan=plan, dbs=dbs)
 
         plan = [(50, 0.1)]
         await self.run_monkey_test(
-            capacity=11, concurrency=10, plan=plan, dbs=dbs)
+            max_capacity=11, concurrency=10, plan=plan, dbs=dbs)
 
     async def test_base_pgpool_monkey_4(self):
         dbs = [
@@ -387,5 +399,97 @@ class TestBasePool(tb.TestCase):
         plan = [(50, 0.5)]
 
         connects = await self.run_monkey_test(
-            capacity=2, concurrency=1, plan=plan, dbs=dbs)
+            max_capacity=2, concurrency=1, plan=plan, dbs=dbs)
         self.assertEqual(connects, [1, 1])
+
+    async def test_base_pgpool_1(self):
+        class TestHolder(pgpool.BaseConnectionHolder):
+
+            async def _connect(self, dbname, user, password):
+                d = random.uniform(0.01, 0.1)
+                await asyncio.sleep(d)
+                if dbname == 'error':
+                    raise TestExc
+                if dbname != 'nodb':
+                    return True
+
+            async def _close(self, con):
+                d = random.uniform(0.01, 0.1)
+                await asyncio.sleep(d)
+                assert con
+
+        class TestPool(pgpool.BasePool):
+
+            def _new_holder(self):
+                return TestHolder(self)
+
+        loop = asyncio.get_running_loop()
+        pool = TestPool(max_capacity=2, concurrency=1, loop=loop)
+
+        c1 = asyncio.create_task(pool.acquire('any', 'any', 'any'))
+        c2 = asyncio.create_task(pool.acquire('error', 'error', 'error'))
+
+        con = await c1
+
+        self.assertEqual(pool.used_holders_count, 1)
+        self.assertEqual(pool.empty_holders_count, 1)
+        self.assertEqual(pool.unused_holders_count, 0)
+
+        await asyncio.sleep(0.1)
+        await pool.release(con)
+
+        self.assertEqual(pool.used_holders_count, 0)
+        self.assertEqual(pool.empty_holders_count, 1)
+        self.assertEqual(pool.unused_holders_count, 1)
+
+        with self.assertRaisesRegex(RuntimeError, 'not previously acquired'):
+            await pool.release(con)
+
+        with self.assertRaises(TestExc):
+            await c2
+
+        self.assertEqual(pool.used_holders_count, 0)
+
+        with self.assertRaisesRegex(RuntimeError, 'not connected'):
+            await pool.acquire('nodb', 'nodb', 'nodb')
+
+        await pool.close()
+        with self.assertRaisesRegex(RuntimeError, 'is closed'):
+            await pool.acquire('any', 'any', 'any')
+
+    async def test_base_pgpool_2(self):
+
+        class TestHolder(pgpool.BaseConnectionHolder):
+
+            async def _connect(self, dbname, user, password):
+                await asyncio.sleep(360)
+                return True
+
+            async def _close(self, con):
+                assert con
+
+        class TestPool(pgpool.BasePool):
+
+            def _new_holder(self):
+                return TestHolder(self)
+
+        loop = asyncio.get_running_loop()
+        pool = TestPool(max_capacity=2, concurrency=1, loop=loop)
+
+        c1 = asyncio.create_task(pool.acquire('never', 'never', 'never'))
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncio.wait_for(c1, 0.3)
+        self.assertTrue(c1.cancelled())
+
+        self.assertEqual(pool.used_holders_count, 0)
+        self.assertEqual(pool.empty_holders_count, 2)
+        self.assertEqual(pool.unused_holders_count, 0)
+
+    async def test_base_pgpool_3(self):
+        loop = asyncio.get_running_loop()
+
+        with self.assertRaisesRegex(RuntimeError, 'greater than concurrency'):
+            pgpool.BasePool(max_capacity=1, concurrency=1, loop=loop)
+
+        with self.assertRaisesRegex(RuntimeError, 'greater than 0'):
+            pgpool.BasePool(max_capacity=-1, concurrency=1, loop=loop)
