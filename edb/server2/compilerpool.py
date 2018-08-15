@@ -23,9 +23,7 @@ __all__ = 'create_pool',
 import asyncio
 import collections
 import dataclasses
-import enum
 import struct
-import typing
 import uuid
 
 import asyncpg
@@ -41,49 +39,16 @@ from edb.lang.schema import error as s_err
 from edb.lang.schema import types as s_types
 
 from . import procpool
+from . import state
 
 
 @dataclasses.dataclass(frozen=True)
-class Database:
+class CompilerDatabaseState:
 
     name: str
     con_args: dict
     type_cache: object
     schema: object
-
-
-class QueryType(enum.IntEnum):
-
-    QUERY = 1
-    DDL = 2
-    DB = 3
-    DELTA = 4
-    SESSION_STATE = 5
-
-    TX_START = 10
-    TX_COMMIT = 11
-    TX_ROLLBACK = 12
-
-
-@dataclasses.dataclass(frozen=True)
-class CompiledQuery:
-
-    dbver: int
-    type: QueryType
-
-    out_type_data: bytes
-    out_type_id: bytes
-    in_type_data: bytes
-    in_type_id: bytes
-
-    sql: bytes
-
-
-@dataclasses.dataclass(frozen=True)
-class CompiledQuerySet:
-
-    dbver: int
-    sql: typing.List[bytes]
 
 
 _uint16_packer = struct.Struct('!H').pack
@@ -327,7 +292,7 @@ class Compiler:
         try:
             im = intromech.IntrospectionMech(con)
             schema = await im.getschema()
-            db = Database(
+            db = CompilerDatabaseState(
                 name=dbname,
                 con_args=con_args,
                 type_cache=im.type_cache,
@@ -381,9 +346,8 @@ class Compiler:
         in_type_data, in_type_id = QueryResultsTypeSerializer.describe(
             db, params_type, {})
 
-        return CompiledQuery(
+        return state.CompiledQuery(
             0,
-            QueryType.QUERY,
             out_type_data, out_type_id.bytes,
             in_type_data, in_type_id.bytes,
             sql_text.encode(defines.EDGEDB_ENCODING))

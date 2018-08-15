@@ -22,6 +22,7 @@ import typing
 
 from . import coreserver as core
 from . import compilerpool
+from . import state  # noqa
 
 
 class PGConParams(typing.NamedTuple):

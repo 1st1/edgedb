@@ -15,13 +15,3 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
-
-EDGEDB_PORT = 5656
-EDGEDB_SUPERUSER = 'edgedb'
-EDGEDB_TEMPLATE_DB = 'edgedb0'
-EDGEDB_SUPERUSER_DB = 'edgedb'
-EDGEDB_ENCODING = 'utf-8'
-
-
-_MAX_QUERIES_CACHE = 1000
