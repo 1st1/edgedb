@@ -82,8 +82,8 @@ class TestLRUIndex(tb.TestCase):
     def test_lru_index_3(self):
         idx = pgpool.LRUIndex()
 
-        o1 = object()
-        o11 = object()
+        o1 = Named('o1')
+        o11 = Named('o11')
 
         idx.put(1, o1)
         idx.put(1, o11)
@@ -154,10 +154,10 @@ class TestMappedDeque(tb.TestCase):
     def test_mapped_deque_1(self):
         lst = pgpool.MappedDeque()
 
-        o1 = object()
-        o2 = object()
-        o3 = object()
-        o4 = object()
+        o1 = Named('o1')
+        o2 = Named('o2')
+        o3 = Named('o3')
+        o4 = Named('o4')
 
         lst.append(o1)
         lst.append(o2)
