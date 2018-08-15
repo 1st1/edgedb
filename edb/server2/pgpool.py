@@ -282,7 +282,7 @@ class BasePool:
         # "unused connection", close its connection, and make a
         # new connection to (dbname, user).
 
-        # Since concurrency must be greater than capacity (enforced
+        # Since concurrency must be less than max-capacity (enforced
         # in __init__ and protected by a semaphore), we must have
         # some currently unused connection holders.
         assert self._unused_holders.count() > 0
