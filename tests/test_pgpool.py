@@ -17,9 +17,13 @@
 #
 
 
+import asyncio
 import dataclasses
+import random
+import time
 
 from edb.server2 import pgpool
+from edb.server2 import taskgroup
 from edb.server import _testbase as tb
 
 
@@ -33,17 +37,17 @@ class TestLRUIndex(tb.TestCase):
     def test_lru_index_1(self):
         idx = pgpool.LRUIndex()
 
-        idx.put(1, '1')
-        idx.put(2, '2')
-        idx.put(1, '11')
-        idx.put(2, '22')
-        idx.put(1, '111')
+        idx.append(1, '1')
+        idx.append(2, '2')
+        idx.append(1, '11')
+        idx.append(2, '22')
+        idx.append(1, '111')
 
         self.assertEqual(idx.pop(1), '111')
         self.assertEqual(idx.pop(1), '11')
         self.assertEqual(idx.pop(2), '22')
 
-        idx.put(1, '11')
+        idx.append(1, '11')
         self.assertEqual(idx.pop(1), '11')
         self.assertEqual(idx.pop(2), '2')
         self.assertEqual(idx.pop(1), '1')
@@ -56,11 +60,11 @@ class TestLRUIndex(tb.TestCase):
     def test_lru_index_2(self):
         idx = pgpool.LRUIndex()
 
-        idx.put(1, '1')
-        idx.put(2, '2')
-        idx.put(1, '11')
-        idx.put(2, '22')
-        idx.put(1, '111')
+        idx.append(1, '1')
+        idx.append(2, '2')
+        idx.append(1, '11')
+        idx.append(2, '22')
+        idx.append(1, '111')
 
         self.assertTrue(idx.discard('11'))
         self.assertFalse(idx.discard('11'))
@@ -69,7 +73,7 @@ class TestLRUIndex(tb.TestCase):
         self.assertEqual(idx.pop(1), '111')
         self.assertEqual(idx.pop(2), '22')
 
-        idx.put(1, '11')
+        idx.append(1, '11')
         self.assertEqual(idx.pop(1), '11')
         self.assertEqual(idx.pop(2), '2')
         self.assertEqual(idx.pop(1), '1')
@@ -85,16 +89,16 @@ class TestLRUIndex(tb.TestCase):
         o1 = Named('o1')
         o11 = Named('o11')
 
-        idx.put(1, o1)
-        idx.put(1, o11)
+        idx.append(1, o1)
+        idx.append(1, o11)
 
         with self.assertRaisesRegex(ValueError, 'already in the index'):
-            idx.put(1, o1)
+            idx.append(1, o1)
 
         self.assertTrue(idx.discard(o1))
         self.assertFalse(idx.discard(o1))
 
-        idx.put(1, o1)
+        idx.append(1, o1)
         self.assertIs(idx.pop(1), o1)
         self.assertIs(idx.pop(1), o11)
 
@@ -110,10 +114,10 @@ class TestLRUIndex(tb.TestCase):
         o111 = Named('o111')
         o2 = Named('o2')
 
-        idx.put(1, o1)
-        idx.put(1, o11)
-        idx.put(1, o111)
-        idx.put(2, o2)
+        idx.append(1, o1)
+        idx.append(1, o11)
+        idx.append(1, o111)
+        idx.append(2, o2)
 
         self.assertEqual(list(idx.lru()), [o1, o11, o111, o2])
         self.assertEqual(idx.count(), 4)
@@ -124,13 +128,13 @@ class TestLRUIndex(tb.TestCase):
         self.assertEqual(list(idx.lru()), [o1])
         self.assertEqual(idx.count(), 1)
 
-        idx.put(1, o111)
-        idx.put(1, o11)
+        idx.append(1, o111)
+        idx.append(1, o11)
 
         self.assertEqual(list(idx.lru()), [o1, o111, o11])
         self.assertEqual(idx.count(), 3)
 
-        idx.put(2, o2)
+        idx.append(2, o2)
 
         self.assertIs(idx.pop(1), o11)
         self.assertEqual(list(idx.lru()), [o1, o111, o2])
@@ -140,7 +144,7 @@ class TestLRUIndex(tb.TestCase):
         self.assertEqual(list(idx.lru()), [o1, o2])
         self.assertEqual(idx.count(), 2)
 
-        self.assertIs(idx.pop(1), o1)
+        self.assertIs(idx.popleft(), o1)
         self.assertEqual(list(idx.lru()), [o2])
         self.assertEqual(idx.count(), 1)
 
@@ -172,7 +176,7 @@ class TestMappedDeque(tb.TestCase):
         self.assertIn(o1, lst)
         self.assertNotIn(o2, lst)
 
-        self.assertIs(lst.popleft(), o1)
+        self.assertEqual(lst.popleftitem(), (o1, None))
         self.assertEqual(list(lst), [o3, o4])
 
         with self.assertRaisesRegex(ValueError, 'already in the list'):
@@ -211,3 +215,177 @@ class TestMappedDeque(tb.TestCase):
         lst = pgpool.MappedDeque()
         lst.append(1, '1')
         self.assertEqual(lst[1], '1')
+
+
+class TestBasePool(tb.TestCase):
+
+    async def run_monkey_test(self, *, capacity, concurrency, dbs, plan):
+        """Simulate load.
+
+        *capacity* is the capacity of the pool.
+
+        *concurrency* is the concurrency set for the pool.
+
+        *dbs* is a list of different databases that we'll be simulating
+        access to, e.g.:
+
+            dbs = [
+                ('db1', 'user1', 'pw'),
+                ('db2', 'user1', 'pw')
+            ]
+
+        *plan* is how to form the queue of acquire calls. It's a list
+        of `(number_of_calls, mode)`, where mode is a float between 0 and 1
+        setting the probability for picking a random db from the *dbs* list.
+
+            plan = [(100, 0.1), (50, 0.8)]
+
+        means that the queue will have first 100 calls with
+        0.9 probability of connecting to the first DB in the *dbs* list;
+        followed by 50 calls with 0.8 probability of connecting to the
+        second DB in the *dbs* list.
+
+        Return a pair of a list with connection counts for each DB in *dbs*
+        (e.g. [10, 20] means that there were 10 connections to dbs[0] and
+        20 to dbs[1]).
+        """
+
+        connect_calls = 0
+        close_calls = 0
+        connects = [0] * len(dbs)
+
+        connect_total_time = 0
+        close_total_time = 0
+        use_total_time = 0
+
+        MAX_CON_TIME = 0.1
+        MAX_CLOSE_TIME = 0.05
+        MAX_TASK_TIME = 0.1
+
+        class TestHolder(pgpool.BaseConnectionHolder):
+
+            async def _connect(self, dbname, user, password):
+                nonlocal connect_calls, connect_total_time
+                connect_calls += 1
+
+                connects[dbs.index((dbname, user, password))] += 1
+
+                d = random.uniform(0.01, MAX_CON_TIME)
+                connect_total_time += d
+
+                await asyncio.sleep(d)
+                return True
+
+            async def _close(self, con):
+                nonlocal close_calls, close_total_time
+                close_calls += 1
+
+                d = random.uniform(0.01, MAX_CLOSE_TIME)
+                close_total_time += d
+
+                await asyncio.sleep(d)
+                assert con
+
+        class TestPool(pgpool.BasePool):
+
+            def _new_holder(self):
+                return TestHolder(self)
+
+        async def task(pool, db, user, pw):
+            nonlocal use_total_time
+            con = await pool.acquire(db, user, pw)
+            self.assertEqual(con.key(), (db, user))
+            try:
+                d = random.uniform(0.04, MAX_TASK_TIME)
+                use_total_time += d
+                await asyncio.sleep(d)
+            finally:
+                await pool.release(con)
+
+        def randin(low, high, med):
+            med = med * (high - low)
+            return round(random.triangular(low, high, med))
+
+        loop = asyncio.get_running_loop()
+        pool = TestPool(capacity=capacity, concurrency=concurrency, loop=loop)
+
+        queue = []
+        for num, median in plan:
+            queue.extend([dbs[randin(0, len(dbs) - 1, median)]
+                          for _ in range(num)])
+
+        started_at = time.monotonic()
+        async with taskgroup.TaskGroup() as g:
+            for q in queue:
+                g.create_task(task(pool, *q))
+        dur = time.monotonic() - started_at
+
+        linear_time = connect_total_time + close_total_time + use_total_time
+        self.assertLess(dur, (linear_time / concurrency) * 1.25)
+
+        await pool.close()
+
+        self.assertEqual(connect_calls, close_calls)
+
+        return connects
+
+    async def test_base_pgpool_monkey_1(self):
+        dbs = [
+            ('db1', 'user1', 'pw'),
+            ('db2', 'user1', 'pw'),
+        ]
+
+        plan = [(100, 0.2), (100, 0.8)]
+
+        connects = await self.run_monkey_test(
+            capacity=8, concurrency=4, plan=plan, dbs=dbs)
+
+        # pool is big enough to keep all 4 connections alive for both DBs
+        self.assertEqual(connects, [4, 4])
+
+    async def test_base_pgpool_monkey_2(self):
+        dbs = [
+            ('db1', 'user1', 'pw'),
+            ('db2', 'user1', 'pw'),
+        ]
+
+        plan = [(100, 0.5)]
+
+        await self.run_monkey_test(
+            capacity=5, concurrency=4, plan=plan, dbs=dbs)
+
+    async def test_base_pgpool_monkey_3(self):
+        dbs = [
+            ('db1', 'user1', 'pw'),
+            ('db2', 'user1', 'pw'),
+            ('db3', 'user1', 'pw'),
+            ('db4', 'user1', 'pw'),
+            ('db5', 'user1', 'pw'),
+            ('db6', 'user1', 'pw'),
+            ('db7', 'user1', 'pw'),
+            ('db8', 'user1', 'pw'),
+        ]
+
+        plan = [(30, 0.1), (30, 0.8), (30, 0.2), (30, 0.6), (30, 1.0)]
+
+        await self.run_monkey_test(
+            capacity=100, concurrency=4, plan=plan, dbs=dbs)
+
+        await self.run_monkey_test(
+            capacity=11, concurrency=10, plan=plan, dbs=dbs)
+
+        plan = [(50, 0.1)]
+        await self.run_monkey_test(
+            capacity=11, concurrency=10, plan=plan, dbs=dbs)
+
+    async def test_base_pgpool_monkey_4(self):
+        dbs = [
+            ('db1', 'user1', 'pw'),
+            ('db2', 'user1', 'pw'),
+        ]
+
+        plan = [(50, 0.5)]
+
+        connects = await self.run_monkey_test(
+            capacity=2, concurrency=1, plan=plan, dbs=dbs)
+        self.assertEqual(connects, [1, 1])
