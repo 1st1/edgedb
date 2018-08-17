@@ -26,6 +26,7 @@ cdef class EdgeConnection:
         self._id = self._server.new_edgecon_id()
         self._dbname = None
         self._user = None
+        self._password = None
 
         self._queries = {}
 

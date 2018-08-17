@@ -19,9 +19,10 @@
 
 import asyncio
 import collections
+import typing
 
 from . import taskgroup
-# from . import coreserver as core
+from . import coreserver as core
 
 
 class MappedDeque:
@@ -168,6 +169,11 @@ class BaseConnectionHolder:
         self._password = None
         self._pool = pool
 
+    @property
+    def connection(self):
+        assert self.connected()
+        return self._con
+
     async def connect(self, dbname, user, password):
         if self.connected():
             raise RuntimeError(
@@ -297,7 +303,7 @@ class BasePool:
         else:
             return holder
 
-    async def release(self, holder: BaseConnectionHolder):
+    def release(self, holder: BaseConnectionHolder):
         if holder not in self._used_holders:
             raise RuntimeError(
                 'unable to release a holder that was not previously acquired')
@@ -318,16 +324,40 @@ class BasePool:
                 g.create_task(holder.clear())
 
 
+class PGConParams(typing.NamedTuple):
+    user: str
+    password: str
+    database: str
+
+
 class PGConnectionHolder(BaseConnectionHolder):
 
     async def _connect(self, dbname, user, password):
-        raise NotImplementedError
+        print("CONNECT")
+        p = PGConParams(user, password, dbname)
+
+        loop = self._pool._loop
+
+        con_fut = loop.create_future()
+
+        self._tr, pr = await loop.create_unix_connection(
+            lambda: core.PGProto(f'', con_fut, p, loop),
+            self._pool._pgaddr)
+
+        await con_fut
+        return pr  # XXX
 
     async def _close(self, con):
-        raise NotImplementedError
+        print("CLOSE")
+        self._tr.abort()
+        self._tr = None
 
 
 class PGPool(BasePool):
+
+    def __init__(self, *, pgaddr, **kwargs):
+        super().__init__(**kwargs)
+        self._pgaddr = pgaddr
 
     def _new_holder(self):
         return PGConnectionHolder(self)

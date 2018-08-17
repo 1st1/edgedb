@@ -40,8 +40,9 @@ cdef class EdgeConnection:
         EdgeProtoState _state
         bint _parsing
         bint _reading_messages
-        str _dbname
-        str _user
+        readonly str _dbname
+        readonly str _user
+        readonly str _password
         str _id
         dict _queries
         object _transport

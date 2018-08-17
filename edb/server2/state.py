@@ -62,13 +62,13 @@ class Authentication:
     _password_hashiter = 100_000
 
     @staticmethod
-    async def from_password(cls, password: bytes):
+    async def from_password(cls, password: str):
         loop = asyncio.get_running_loop()
 
         auth_hash = await loop.run_in_executor(
             None, hashlib.pbkdf2_hmac,
             'sha256',
-            password,
+            password.encode('utf-8'),
             Authentication._password_salt,
             Authentication._password_hashiter)
 
@@ -77,17 +77,27 @@ class Authentication:
             auth_hash=auth_hash)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass
 class Database:
 
-    username: str
-    dbname: str
+    username: bytes
+    dbname: bytes
 
     def __post_init__(self):
         self._queries = lru.LRUMapping(
             maxsize=defines._MAX_QUERIES_CACHE)
 
         self._successful_auths = set()
+
+    def lookup_query(self, eql: str) -> Query:
+        try:
+            return self._queries[eql]
+        except KeyError:
+            return None
+
+    def add_query(self, eql: str, compiled: CompiledQuery):
+        self._queries[eql] = q = Query(compiled=compiled)
+        return q
 
 
 class DatabasesIndex:

@@ -308,7 +308,7 @@ class TestBasePool(tb.TestCase):
                 use_total_time += d
                 await asyncio.sleep(d)
             finally:
-                await pool.release(con)
+                pool.release(con)
 
         def randin(low, high, med):
             med = med * (high - low)
@@ -436,14 +436,14 @@ class TestBasePool(tb.TestCase):
         self.assertEqual(pool.unused_holders_count, 0)
 
         await asyncio.sleep(0.1)
-        await pool.release(con)
+        pool.release(con)
 
         self.assertEqual(pool.used_holders_count, 0)
         self.assertEqual(pool.empty_holders_count, 1)
         self.assertEqual(pool.unused_holders_count, 1)
 
         with self.assertRaisesRegex(RuntimeError, 'not previously acquired'):
-            await pool.release(con)
+            pool.release(con)
 
         with self.assertRaises(TestExc):
             await c2

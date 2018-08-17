@@ -17,12 +17,15 @@
 #
 
 
+import asyncio
+import math
 import os
 import typing
 
 from . import coreserver as core
 from . import compilerpool
-from . import state  # noqa
+from . import pgpool
+from . import state
 
 
 class PGConParams(typing.NamedTuple):
@@ -77,7 +80,16 @@ class Server(core.CoreServer):
         self._interfaces.append(iface)
 
     async def _authorize(self, user, password, dbname, callback):
-        callback(None)
+        try:
+            db = self._dbindex.get(dbname, user)
+            if db is None:
+                holder = await self._pgpool.acquire(dbname, user, password)
+                self._pgpool.release(holder)
+                self._dbindex.register(dbname, user)
+        except Exception as ex:
+            callback(ex)
+        else:
+            callback(None)
 
         # if dbname in self._databases:
         #     self._loop.call_soon(callback, None)
@@ -93,37 +105,30 @@ class Server(core.CoreServer):
     async def compile_edgeql(self, dbname, eql):
         return await self._cpool.call('compile_edgeql', dbname, eql)
 
-    async def _parse(self, dbname, stmt_name, query, callback):
+    async def _parse(self, con, stmt_name, eql, callback):
         try:
-            q = await self.compile_edgeql(dbname, query)
+            db = self._dbindex.get(con._dbname, con._user)
+            query = db.lookup_query(eql)
+            if query is None:
+                cq = await self.compile_edgeql(con._dbname, eql)
+                query = db.add_query(eql, cq)
         except Exception as ex:
             callback(None, None, ex)
         else:
-            callback(stmt_name, q, None)
+            callback(stmt_name, query.compiled, None)
 
     async def _execute(self, con, query, bind_args: bytes):
-        ca = self._cluster.get_connection_spec()
-        host = ca.get('host', '')
-        port = ca.get('port', '')
-        p = PGConParams(con.get_user(), '', con.get_dbname())
-
-        con_fut = self._loop.create_future()
-
-        addr = os.path.join(host, f'.s.PGSQL.{port}')
-
-        tr, pr = await self._loop.create_unix_connection(
-            lambda: core.PGProto(f'{host}:{port}', con_fut, p, self._loop),
-            addr)
-
+        holder = await self._pgpool.acquire(
+            con._dbname, con._user, con._password)
         try:
-            await con_fut
-
-            data = await pr.execute_anonymous(query.sql, bind_args)
+            data = await holder.connection.execute_anonymous(
+                query.sql, bind_args)
             con._on_server_execute_data(data)
         finally:
-            tr.abort()
+            self._pgpool.release(holder)
 
     async def _simple_query(self, con, script):
+
         ca = self._cluster.get_connection_spec()
         host = ca.get('host', '')
         port = ca.get('port', '')
@@ -150,10 +155,21 @@ class Server(core.CoreServer):
             raise RuntimeError('already serving')
         self._serving = True
 
+        concurrency = 4
+
+        self._dbindex = state.DatabasesIndex()
+
         self._cpool = await compilerpool.create_pool(
-            capacity=3,
+            capacity=concurrency,
             runstate_dir=self._runstate_dir,
             connection_spec=self._cluster.get_connection_spec())
+
+        ca = self._cluster.get_connection_spec()
+        self._pgpool = pgpool.PGPool(
+            loop=asyncio.get_running_loop(),
+            max_capacity=math.ceil(concurrency * 1.5),
+            concurrency=concurrency,
+            pgaddr=os.path.join(ca.get("host"), f'.s.PGSQL.{ca.get("port")}'))
 
         for iface in self._interfaces:
             srv = await self._loop.create_server(
