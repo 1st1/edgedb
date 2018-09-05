@@ -238,8 +238,8 @@ class TestBasePool(tb.TestCase):
         access to, e.g.:
 
             dbs = [
-                ('db1', 'user1', 'pw'),
-                ('db2', 'user1', 'pw')
+                'db1',
+                'db2',
             ]
 
         *plan* is how to form the queue of acquire calls. It's a list
@@ -272,11 +272,11 @@ class TestBasePool(tb.TestCase):
 
         class TestHolder(pgpool.BaseConnectionHolder):
 
-            async def _connect(self, dbname, user, password):
+            async def _connect(self, dbname):
                 nonlocal connect_calls, connect_total_time
                 connect_calls += 1
 
-                connects[dbs.index((dbname, user, password))] += 1
+                connects[dbs.index(dbname)] += 1
 
                 d = random.uniform(0.01, MAX_CON_TIME)
                 connect_total_time += d
@@ -299,10 +299,10 @@ class TestBasePool(tb.TestCase):
             def _new_holder(self):
                 return TestHolder(self)
 
-        async def task(pool, db, user, pw):
+        async def task(pool, db):
             nonlocal use_total_time
-            con = await pool.acquire(db, user, pw)
-            self.assertEqual(con.key(), (db, user))
+            con = await pool.acquire(db)
+            self.assertEqual(con.key(), db)
             try:
                 d = random.uniform(0.04, MAX_TASK_TIME)
                 use_total_time += d
@@ -326,7 +326,7 @@ class TestBasePool(tb.TestCase):
         started_at = time.monotonic()
         async with taskgroup.TaskGroup() as g:
             for q in queue:
-                g.create_task(task(pool, *q))
+                g.create_task(task(pool, q))
         dur = time.monotonic() - started_at
 
         linear_time = connect_total_time + close_total_time + use_total_time
@@ -340,8 +340,8 @@ class TestBasePool(tb.TestCase):
 
     async def test_base_pgpool_monkey_1(self):
         dbs = [
-            ('db1', 'user1', 'pw'),
-            ('db2', 'user1', 'pw'),
+            'db1',
+            'db2',
         ]
 
         plan = [(100, 0.2), (100, 0.8)]
@@ -354,8 +354,8 @@ class TestBasePool(tb.TestCase):
 
     async def test_base_pgpool_monkey_2(self):
         dbs = [
-            ('db1', 'user1', 'pw'),
-            ('db2', 'user1', 'pw'),
+            'db1',
+            'db2',
         ]
 
         plan = [(100, 0.5)]
@@ -368,14 +368,14 @@ class TestBasePool(tb.TestCase):
 
     async def test_base_pgpool_monkey_3(self):
         dbs = [
-            ('db1', 'user1', 'pw'),
-            ('db2', 'user1', 'pw'),
-            ('db3', 'user1', 'pw'),
-            ('db4', 'user1', 'pw'),
-            ('db5', 'user1', 'pw'),
-            ('db6', 'user1', 'pw'),
-            ('db7', 'user1', 'pw'),
-            ('db8', 'user1', 'pw'),
+            'db1',
+            'db2',
+            'db3',
+            'db4',
+            'db5',
+            'db6',
+            'db7',
+            'db8',
         ]
 
         plan = [(30, 0.1), (30, 0.8), (30, 0.2), (30, 0.6), (30, 1.0)]
@@ -392,8 +392,8 @@ class TestBasePool(tb.TestCase):
 
     async def test_base_pgpool_monkey_4(self):
         dbs = [
-            ('db1', 'user1', 'pw'),
-            ('db2', 'user1', 'pw'),
+            'db1',
+            'db2',
         ]
 
         plan = [(50, 0.5)]
@@ -405,7 +405,7 @@ class TestBasePool(tb.TestCase):
     async def test_base_pgpool_1(self):
         class TestHolder(pgpool.BaseConnectionHolder):
 
-            async def _connect(self, dbname, user, password):
+            async def _connect(self, dbname):
                 d = random.uniform(0.01, 0.1)
                 await asyncio.sleep(d)
                 if dbname == 'error':
@@ -426,8 +426,8 @@ class TestBasePool(tb.TestCase):
         loop = asyncio.get_running_loop()
         pool = TestPool(max_capacity=2, concurrency=1, loop=loop)
 
-        c1 = asyncio.create_task(pool.acquire('any', 'any', 'any'))
-        c2 = asyncio.create_task(pool.acquire('error', 'error', 'error'))
+        c1 = asyncio.create_task(pool.acquire('any'))
+        c2 = asyncio.create_task(pool.acquire('error'))
 
         con = await c1
 
@@ -451,17 +451,17 @@ class TestBasePool(tb.TestCase):
         self.assertEqual(pool.used_holders_count, 0)
 
         with self.assertRaisesRegex(RuntimeError, 'not connected'):
-            await pool.acquire('nodb', 'nodb', 'nodb')
+            await pool.acquire('nodb')
 
         await pool.close()
         with self.assertRaisesRegex(RuntimeError, 'is closed'):
-            await pool.acquire('any', 'any', 'any')
+            await pool.acquire('any')
 
     async def test_base_pgpool_2(self):
 
         class TestHolder(pgpool.BaseConnectionHolder):
 
-            async def _connect(self, dbname, user, password):
+            async def _connect(self, dbname):
                 await asyncio.sleep(360)
                 return True
 
@@ -476,7 +476,7 @@ class TestBasePool(tb.TestCase):
         loop = asyncio.get_running_loop()
         pool = TestPool(max_capacity=2, concurrency=1, loop=loop)
 
-        c1 = asyncio.create_task(pool.acquire('never', 'never', 'never'))
+        c1 = asyncio.create_task(pool.acquire('never'))
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(c1, 0.3)
         self.assertTrue(c1.cancelled())

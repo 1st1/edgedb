@@ -174,6 +174,7 @@ def run_server(args):
             'log_disconnections': 'yes',
             'log_min_messages': 'INFO',
             'client_min_messages': 'INFO',
+            'listen_addresses': '',  # we use Unix sockets
         }
 
         if args['timezone']:
@@ -195,11 +196,11 @@ def run_server(args):
                 database='all', user='all',
                 auth_method='trust'
             )
-            cluster.add_hba_entry(
-                type='local', address=ipaddress.ip_network('127.0.0.0/24'),
-                database='all', user='all',
-                auth_method='trust'
-            )
+            # cluster.add_hba_entry(
+            #     type='local', address=ipaddress.ip_network('127.0.0.0/24'),
+            #     database='all', user='all',
+            #     auth_method='trust'
+            # )
 
         cluster_status = cluster.get_status()
 

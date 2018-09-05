@@ -17,11 +17,7 @@
 #
 
 
-import asyncio
 import dataclasses
-import enum
-import hashlib
-import os
 import typing
 
 from edb.server import defines
@@ -45,36 +41,6 @@ class CompiledQuery:
 class Query:
 
     compiled: typing.Optional[CompiledQuery]
-
-
-class AuthenticationType(enum.IntEnum):
-
-    PASSWORD = 1
-
-
-@dataclasses.dataclass(frozen=True)
-class Authentication:
-
-    auth_type: AuthenticationType
-    auth_hash: bytes
-
-    _password_salt = os.urandom(20)
-    _password_hashiter = 100_000
-
-    @staticmethod
-    async def from_password(cls, password: str):
-        loop = asyncio.get_running_loop()
-
-        auth_hash = await loop.run_in_executor(
-            None, hashlib.pbkdf2_hmac,
-            'sha256',
-            password.encode('utf-8'),
-            Authentication._password_salt,
-            Authentication._password_hashiter)
-
-        return Authentication(
-            auth_type=AuthenticationType.PASSWORD,
-            auth_hash=auth_hash)
 
 
 @dataclasses.dataclass

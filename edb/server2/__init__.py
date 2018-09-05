@@ -21,6 +21,7 @@ import asyncio
 import math
 import os
 import typing
+import urllib.parse
 
 from . import coreserver as core
 from . import compilerpool
@@ -81,7 +82,8 @@ class Server(core.CoreServer):
         try:
             db = self._dbindex.get(dbname, user)
             if db is None:
-                holder = await self._pgpool.acquire(dbname, user, password)
+                # XXX validate (user, password)
+                holder = await self._pgpool.acquire(dbname)
                 self._pgpool.release(holder)
                 if self._dbindex.get(dbname, user) is None:
                     # There can be a race between acquiring a connection
@@ -112,8 +114,7 @@ class Server(core.CoreServer):
             callback(stmt_name, query.compiled, None)
 
     async def _execute(self, con, query, bind_args: bytes):
-        holder = await self._pgpool.acquire(
-            con._dbname, con._user, con._password)
+        holder = await self._pgpool.acquire(con._dbname)
         try:
             data = await holder.connection.execute_anonymous(
                 query.sql, bind_args)
@@ -153,17 +154,27 @@ class Server(core.CoreServer):
 
         self._dbindex = state.DatabasesIndex()
 
+        pg_con_spec = self._cluster.get_connection_spec()
+        if 'host' not in pg_con_spec and 'dsn' in pg_con_spec:
+            # XXX
+            parsed = urllib.parse.urlparse(pg_con_spec['dsn'])
+            query = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
+            host = query.get("host")[-1]
+            port = query.get("port")[-1]
+        else:
+            host = pg_con_spec.get("host")
+            port = pg_con_spec.get("port")
+
         self._cpool = await compilerpool.create_pool(
             capacity=concurrency,
             runstate_dir=self._runstate_dir,
-            connection_spec=self._cluster.get_connection_spec())
+            connection_spec=pg_con_spec)
 
-        ca = self._cluster.get_connection_spec()
         self._pgpool = pgpool.PGPool(
             loop=asyncio.get_running_loop(),
             max_capacity=math.ceil(concurrency * 1.5),
             concurrency=concurrency,
-            pgaddr=os.path.join(ca.get("host"), f'.s.PGSQL.{ca.get("port")}'))
+            pgaddr=os.path.join(host, f'.s.PGSQL.{port}'))
 
         for iface in self._interfaces:
             srv = await self._loop.create_server(

@@ -19,6 +19,8 @@
 
 import socket
 
+from edb.server import defines
+
 
 cdef class CorePGProto:
 
@@ -380,7 +382,7 @@ cdef class CorePGProto:
         buf.write_bytestring(b'false')
 
         buf.write_str('user', self.encoding)
-        buf.write_str(self.con_params.user, self.encoding)
+        buf.write_str(defines.EDGEDB_SUPERUSER, self.encoding)
 
         buf.write_str('database', self.encoding)
         buf.write_str(self.con_params.database, self.encoding)

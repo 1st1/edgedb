@@ -165,8 +165,6 @@ class BaseConnectionHolder:
     def __init__(self, pool):
         self._con = None
         self._dbname = None
-        self._user = None
-        self._password = None
         self._pool = pool
 
     @property
@@ -174,34 +172,29 @@ class BaseConnectionHolder:
         assert self.connected()
         return self._con
 
-    async def connect(self, dbname, user, password):
+    async def connect(self, dbname):
         if self.connected():
             raise RuntimeError(
-                f'cannot connect connection holder to ({dbname!r}, {user!r}) '
-                f'as it is already connected to ({self._dbname!r}, '
-                f'{self._user})')
+                f'cannot connect connection holder to {dbname!r} '
+                f'as it is already connected')
 
-        self._con = await self._connect(dbname, user, password)
+        self._con = await self._connect(dbname)
         self._dbname = dbname
-        self._user = user
-        self._password = password
 
     async def clear(self):
         if self._con is not None:
             try:
                 await self._close(self._con)
             finally:
-                self._user = None
-                self._password = None
                 self._con = None
 
     def connected(self):
         return self._con is not None
 
     def key(self):
-        return (self._dbname, self._user)
+        return self._dbname
 
-    async def _connect(self, dbname, user, password):
+    async def _connect(self, dbname):
         raise NotImplementedError
 
     async def _close(self, con):
@@ -248,12 +241,12 @@ class BasePool:
     def used_holders_count(self):
         return len(self._used_holders)
 
-    async def acquire(self, dbname, user, password):
+    async def acquire(self, dbname):
         if self._closed:
             raise RuntimeError(f'{type(self).__name__} is closed')
         await self._lock.acquire()
         try:
-            holder = await self._acquire(dbname, user, password)
+            holder = await self._acquire(dbname)
             if not holder.connected():
                 raise RuntimeError('connection holder is not connected')
             if holder in self._used_holders:
@@ -265,20 +258,20 @@ class BasePool:
             self._used_holders.add(holder)
             return holder
 
-    async def _acquire(self, dbname, user, password) -> BaseConnectionHolder:
-        # Let's see if there's an existing connection to (dbname, user)
+    async def _acquire(self, dbname) -> BaseConnectionHolder:
+        # Let's see if there's an existing connection to dbname
         # that currently isn't in use.
-        holder = self._unused_holders.pop((dbname, user))
+        holder = self._unused_holders.pop(dbname)
         if holder is not None:
             return holder
 
-        # So there are no currently unused connections to (dbname, user);
+        # So there are no currently unused connections to dbname;
         # let's check if we have an empty holder that we can start
         # using.
         if self._empty_holders:
             holder = self._empty_holders.popleft()
             try:
-                await holder.connect(dbname, user, password)
+                await holder.connect(dbname)
             except Exception:
                 self._empty_holders.append(holder)
                 raise
@@ -286,7 +279,7 @@ class BasePool:
 
         # There are no empty holders.  Let's pop the least used
         # "unused connection", close its connection, and make a
-        # new connection to (dbname, user).
+        # new connection to dbname.
 
         # Since concurrency must be less than max-capacity (enforced
         # in __init__ and protected by a semaphore), we must have
@@ -296,7 +289,7 @@ class BasePool:
         holder = self._unused_holders.popleft()
         try:
             await holder.clear()
-            await holder.connect(dbname, user, password)
+            await holder.connect(dbname)
         except Exception:
             self._empty_holders.append(holder)
             raise
@@ -325,16 +318,14 @@ class BasePool:
 
 
 class PGConParams(typing.NamedTuple):
-    user: str
-    password: str
     database: str
 
 
 class PGConnectionHolder(BaseConnectionHolder):
 
-    async def _connect(self, dbname, user, password):
+    async def _connect(self, dbname):
         print("CONNECT")
-        p = PGConParams(user, password, dbname)
+        p = PGConParams(dbname)
 
         loop = self._pool._loop
 
