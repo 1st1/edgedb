@@ -59,7 +59,7 @@ class Worker:
             proc.terminate()
             raise
 
-    async def spawn(self):
+    async def _spawn(self):
         if self._proc is not None:
             asyncio.create_task(self._kill_proc(self._proc))
             self._proc = None
@@ -76,7 +76,7 @@ class Worker:
 
     async def call(self, method_name, *args):
         if self._con.is_closed():
-            await self.spawn()
+            await self._spawn()
 
         msg = pickle.dumps((method_name, args))
         data = await self._con.request(msg)
@@ -123,7 +123,7 @@ class Pool:
 
     async def _spawn_worker(self):
         worker = Worker(self._server, self._worker_command_args)
-        await worker.spawn()
+        await worker._spawn()
         self._workers.append(worker)
         self._workers_queue.put_nowait(worker)
 
