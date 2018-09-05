@@ -94,6 +94,12 @@ class Server(core.CoreServer):
         else:
             callback(None)
 
+    def _parse_no_wait(self, con, eql):
+        db = self._dbindex.get(con._dbname)
+        query = db.lookup_query(eql)
+        if query:
+            return query.compiled
+
     async def _parse(self, con, stmt_name, eql, callback):
         try:
             db = self._dbindex.get(con._dbname)

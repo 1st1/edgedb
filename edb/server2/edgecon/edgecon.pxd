@@ -42,7 +42,6 @@ cdef class EdgeConnection:
         bint _reading_messages
         readonly str _dbname
         readonly str _user
-        readonly str _password
         str _id
         dict _queries
         object _transport

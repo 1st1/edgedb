@@ -26,7 +26,6 @@ cdef class EdgeConnection:
         self._id = self._server.new_edgecon_id()
         self._dbname = None
         self._user = None
-        self._password = None
 
         self._queries = {}
 
@@ -191,7 +190,12 @@ cdef class EdgeConnection:
     cdef _handle__parse(self):
         stmt_name = self.buffer.read_utf8()
         query = self.buffer.read_utf8()
-        self._server.edgecon_parse(self, stmt_name, query)
+
+        compiled = self._server._parse_no_wait(self, query)
+        if compiled is not None:
+            self._on_server_parse(stmt_name, compiled, None)
+        else:
+            self._server.edgecon_parse(self, stmt_name, query)
 
     cdef _handle__describe(self):
         cdef:
