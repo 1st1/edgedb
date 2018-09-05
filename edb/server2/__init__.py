@@ -80,15 +80,15 @@ class Server(core.CoreServer):
 
     async def _authorize(self, user, password, dbname, callback):
         try:
-            db = self._dbindex.get(dbname, user)
+            db = self._dbindex.get(dbname)
             if db is None:
                 # XXX validate (user, password)
                 holder = await self._pgpool.acquire(dbname)
                 self._pgpool.release(holder)
-                if self._dbindex.get(dbname, user) is None:
+                if self._dbindex.get(dbname) is None:
                     # There can be a race between acquiring a connection
                     # and registering a db.
-                    self._dbindex.register(dbname, user)
+                    self._dbindex.register(dbname)
         except Exception as ex:
             callback(ex)
         else:
@@ -96,7 +96,7 @@ class Server(core.CoreServer):
 
     async def _parse(self, con, stmt_name, eql, callback):
         try:
-            db = self._dbindex.get(con._dbname, con._user)
+            db = self._dbindex.get(con._dbname)
             query = db.lookup_query(eql)
             if query is None:
                 compiler = await self._cpool.acquire()

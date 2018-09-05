@@ -46,7 +46,6 @@ class Query:
 @dataclasses.dataclass
 class Database:
 
-    username: bytes
     dbname: bytes
 
     def __post_init__(self):
@@ -71,13 +70,13 @@ class DatabasesIndex:
     def __init__(self):
         self._dbs = {}
 
-    def get(self, dbname, username) -> typing.Optional[Database]:
-        return self._dbs.get((dbname, username))
+    def get(self, dbname) -> typing.Optional[Database]:
+        return self._dbs.get(dbname)
 
-    def register(self, dbname, username) -> Database:
-        if self.get(dbname, username) is not None:
+    def register(self, dbname) -> Database:
+        if self.get(dbname) is not None:
             raise RuntimeError(
-                f'db ({dbname}, {username}) is already registered')
-        db = Database(username, dbname)
-        self._dbs[(dbname, username)] = db
+                f'db {dbname!r} is already registered')
+        db = Database(dbname)
+        self._dbs[dbname] = db
         return db
