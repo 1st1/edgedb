@@ -168,14 +168,9 @@ cdef class CorePGProto:
 
         elif mtype == b'D':
             # DataRow
-            # XXX this is very slow; optimize by avoiding reconstructing
-            # the buffer.
-            d = self.buffer.consume_message()
             if self.result_data is None:
                 self.result_data = WriteBuffer.new()
-            self.result_data.write_byte(b'D')
-            self.result_data.write_int32(d.length + 4)
-            self.result_data.write_bytes(d.as_bytes())
+            self.buffer.consume_full_messages(self.result_data, b'D')
 
         elif mtype == b's':
             # PortalSuspended
