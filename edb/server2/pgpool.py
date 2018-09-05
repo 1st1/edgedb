@@ -317,22 +317,16 @@ class BasePool:
                 g.create_task(holder.clear())
 
 
-class PGConParams(typing.NamedTuple):
-    database: str
-
-
 class PGConnectionHolder(BaseConnectionHolder):
 
     async def _connect(self, dbname):
         print("CONNECT")
-        p = PGConParams(dbname)
-
         loop = self._pool._loop
 
         con_fut = loop.create_future()
 
         self._tr, pr = await loop.create_unix_connection(
-            lambda: core.PGProto(f'', con_fut, p, loop),
+            lambda: core.PGProto(f'', con_fut, dbname, loop),
             self._pool._pgaddr)
 
         await con_fut

@@ -84,8 +84,7 @@ cdef class CorePGProto:
 
         object transport
 
-        # Instance of _ConnectionParameters
-        object con_params
+        str dbname
 
         readonly int32_t backend_pid
         readonly int32_t backend_secret
@@ -109,8 +108,6 @@ cdef class CorePGProto:
     cdef _parse_msg_ready_for_query(self)
     cdef _parse_msg_error_response(self, is_error)
     cdef _parse_msg_command_complete(self)
-
-    cdef _auth_password_message_cleartext(self)
 
     cdef _write(self, buf)
     cdef inline _write_sync_message(self)

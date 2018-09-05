@@ -24,11 +24,10 @@ from edb.server import defines
 
 cdef class CorePGProto:
 
-    def __init__(self, con_params):
-        # type of `con_params` is `_ConnectionParameters`
+    def __init__(self, dbname):
         self.buffer = ReadBuffer()
         self.auth_msg = None
-        self.con_params = con_params
+        self.dbname = dbname
         self.transport = None
         self.con_status = PGCON_BAD
         self.state = PGPROTO_IDLE
@@ -240,14 +239,10 @@ cdef class CorePGProto:
             # AuthenticationOk
             self.result_type = RESULT_OK
 
-        elif status == PGAUTH_REQUIRED_PASSWORD:
-            # AuthenticationCleartextPassword
-            self.result_type = RESULT_OK
-            self.auth_msg = self._auth_password_message_cleartext()
-
         elif status in (PGAUTH_REQUIRED_KERBEROS, PGAUTH_REQUIRED_SCMCRED,
                         PGAUTH_REQUIRED_GSS, PGAUTH_REQUIRED_GSS_CONTINUE,
-                        PGAUTH_REQUIRED_SSPI, PGAUTH_REQUIRED_PASSWORDMD5):
+                        PGAUTH_REQUIRED_SSPI, PGAUTH_REQUIRED_PASSWORDMD5,
+                        PGAUTH_REQUIRED_PASSWORD):
             self.result_type = RESULT_FAILED
             self.result = RuntimeError(
                 'unsupported authentication method requested by the '
@@ -260,16 +255,6 @@ cdef class CorePGProto:
                 'server: {}'.format(status))
 
         self.buffer.consume_message()
-
-    cdef _auth_password_message_cleartext(self):
-        cdef:
-            WriteBuffer msg
-
-        msg = WriteBuffer.new_message(b'p')
-        msg.write_bytestring(self.con_params.password.encode('ascii'))
-        msg.end_message()
-
-        return msg
 
     cdef _parse_msg_ready_for_query(self):
         cdef char status = self.buffer.read_byte()
@@ -385,7 +370,7 @@ cdef class CorePGProto:
         buf.write_str(defines.EDGEDB_SUPERUSER, self.encoding)
 
         buf.write_str('database', self.encoding)
-        buf.write_str(self.con_params.database, self.encoding)
+        buf.write_str(self.dbname, self.encoding)
 
         buf.write_bytestring(b'')
 
