@@ -33,6 +33,12 @@ KILL_TIMEOUT = 10.0
 WORKER_MOD = __name__.rpartition('.')[0] + '.worker'
 
 
+# Inherit sys.path so that import system can find worker class
+# in unittests.
+_ENV = os.environ.copy()
+_ENV['PYTHONPATH'] = ':'.join(sys.path)
+
+
 class Worker:
 
     def __init__(self, server, command_args):
@@ -58,7 +64,8 @@ class Worker:
             asyncio.create_task(self._kill_proc(self._proc))
             self._proc = None
 
-        self._proc = await asyncio.create_subprocess_exec(*self._command_args)
+        self._proc = await asyncio.create_subprocess_exec(
+            *self._command_args, env=_ENV)
         try:
             self._con = await asyncio.wait_for(
                 self._server.get_by_pid(self._proc.pid),
@@ -67,13 +74,17 @@ class Worker:
             self._proc.kill()
             raise
 
-    async def call(self, method_name, args):
+    async def call(self, method_name, *args):
         if self._con.is_closed():
             await self.spawn()
 
         msg = pickle.dumps((method_name, args))
         data = await self._con.request(msg)
-        return pickle.loads(data)
+        status, data = pickle.loads(data)
+        if status == 0:
+            return data
+        else:
+            raise data
 
     def close(self):
         self._proc.kill()
@@ -116,18 +127,18 @@ class Pool:
         self._workers.append(worker)
         self._workers_queue.put_nowait(worker)
 
+    async def acquire(self):
+        return await self._workers_queue.get()
+
+    def release(self, worker):
+        self._workers_queue.put_nowait(worker)
+
     async def call(self, method_name, *args):
-        worker = await self._workers_queue.get()
-
+        worker = await self.acquire()
         try:
-            status, data = await worker.call(method_name, args)
+            return await worker.call(method_name, *args)
         finally:
-            self._workers_queue.put_nowait(worker)
-
-        if status == 0:
-            return data
-        else:
-            raise data
+            self.release(worker)
 
     async def start(self):
         await self._server.start()

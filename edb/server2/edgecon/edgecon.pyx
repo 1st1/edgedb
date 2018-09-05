@@ -37,11 +37,9 @@ cdef class EdgeConnection:
         self._reading_messages = False
 
     cdef _pause_parsing(self):
-        print('$$$ pause parsing')
         self._parsing = False
 
     cdef _resume_parsing(self):
-        print('$$$ resume parsing')
         self._parsing = True
         if not self._reading_messages:
             self._read_buffer_messages()
@@ -62,7 +60,6 @@ cdef class EdgeConnection:
             self._pause_parsing()
 
             mtype = self.buffer.get_message_type()
-            print('INCOMING MESSAGE', chr(mtype))
             state = self._state
 
             try:
@@ -144,7 +141,6 @@ cdef class EdgeConnection:
             self._state = EDGEPROTO_IDLE
             self._resume_parsing()
         else:
-            print('!!!!!!', exc)
             raise exc
 
     def _on_server_execute_data(self, data):
@@ -163,7 +159,6 @@ cdef class EdgeConnection:
         msg_buf.end_message()
         self._write(msg_buf)
 
-        print('SENT>>')
         self._state = EDGEPROTO_IDLE
         self._resume_parsing()
 
@@ -235,8 +230,6 @@ cdef class EdgeConnection:
         out_buf.write_int32(0x00010001)
 
         b = in_buf.read(4)  # ignore buffer length
-        print(b)
-
 
         # number of elements in the tuple
         argsnum = hton.unpack_int32(in_buf.read(4))
@@ -293,7 +286,6 @@ cdef class EdgeConnection:
 
     def connection_lost(self, exc):
         self._server.edgecon_unregister(self)
-        print('CON LOST', exc)
         pass
 
     def pause_writing(self):

@@ -64,8 +64,8 @@ class TestProcPool(tb.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        super().setUpClass()
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        super().setUpClass()
 
     @classmethod
     def tearDownClass(cls):

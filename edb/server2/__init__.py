@@ -64,8 +64,6 @@ class Server(core.CoreServer):
 
         self._edgecon_id = 0
 
-        self._databases = {}
-
     def add_binary_interface(self, host, port):
         self._add_interface(BinaryInterface(self, host, port))
 
@@ -85,33 +83,29 @@ class Server(core.CoreServer):
             if db is None:
                 holder = await self._pgpool.acquire(dbname, user, password)
                 self._pgpool.release(holder)
-                self._dbindex.register(dbname, user)
+                if self._dbindex.get(dbname, user) is None:
+                    # There can be a race between acquiring a connection
+                    # and registering a db.
+                    self._dbindex.register(dbname, user)
         except Exception as ex:
             callback(ex)
         else:
             callback(None)
-
-        # if dbname in self._databases:
-        #     self._loop.call_soon(callback, None)
-        #     return
-
-        # try:
-        #     await self._load_database(user, dbname)
-        # except Exception as ex:
-        #     callback(ex)
-        # else:
-        #     callback(None)
-
-    async def compile_edgeql(self, dbname, eql):
-        return await self._cpool.call('compile_edgeql', dbname, eql)
 
     async def _parse(self, con, stmt_name, eql, callback):
         try:
             db = self._dbindex.get(con._dbname, con._user)
             query = db.lookup_query(eql)
             if query is None:
-                cq = await self.compile_edgeql(con._dbname, eql)
-                query = db.add_query(eql, cq)
+                compiler = await self._cpool.acquire()
+                try:
+                    query = db.lookup_query(eql)
+                    if query is None:
+                        compiled_query = await compiler.call(
+                            'compile_edgeql', con._dbname, eql)
+                        query = db.add_query(eql, compiled_query)
+                finally:
+                    self._cpool.release(compiler)
         except Exception as ex:
             callback(None, None, ex)
         else:

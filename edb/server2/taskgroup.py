@@ -20,6 +20,8 @@
 import asyncio
 import functools
 import itertools
+import textwrap
+import traceback
 
 
 class TaskGroup:
@@ -267,7 +269,11 @@ class MultiError(Exception):
             types = set(type(e).__name__ for e in errors)
             msg = f'{msg}; {len(errors)} sub errors: ({", ".join(types)})'
             for er in errors:
-                msg += f'\n * {type(er).__name__}: {er}'
+                msg += f'\n + {type(er).__name__}: {er}'
+                if er.__traceback__:
+                    er_tb = ''.join(traceback.format_tb(er.__traceback__))
+                    er_tb = textwrap.indent(er_tb, ' | ')
+                    msg += f'\n{er_tb}\n'
         super().__init__(msg, *args)
         self.__errors__ = tuple(errors)
 
