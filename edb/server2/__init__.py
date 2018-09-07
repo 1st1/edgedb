@@ -17,15 +17,12 @@
 #
 
 
-import asyncio
-import math
 import os
 import typing
 import urllib.parse
 
 from . import coreserver as core
-from . import compilerpool
-from . import pgpool
+from . import executor
 from . import state
 
 
@@ -61,8 +58,8 @@ class Server(core.CoreServer):
         self._servers = []
         self._cluster = cluster
         self._runstate_dir = runstate_dir
-        self._cpool = None
 
+        self._epool = None
         self._edgecon_id = 0
 
     def add_binary_interface(self, host, port):
@@ -80,15 +77,7 @@ class Server(core.CoreServer):
 
     async def _authorize(self, user, password, dbname, callback):
         try:
-            db = self._dbindex.get(dbname)
-            if db is None:
-                # XXX validate (user, password)
-                holder = await self._pgpool.acquire(dbname)
-                self._pgpool.release(holder)
-                if self._dbindex.get(dbname) is None:
-                    # There can be a race between acquiring a connection
-                    # and registering a db.
-                    self._dbindex.register(dbname)
+            await self._epool.authorize(dbname, user, password)
         except Exception as ex:
             callback(ex)
         else:
@@ -102,54 +91,38 @@ class Server(core.CoreServer):
 
     async def _parse(self, con, stmt_name, eql, callback):
         try:
-            db = self._dbindex.get(con._dbname)
-            query = db.lookup_query(eql)
-            if query is None:
-                compiler = await self._cpool.acquire()
-                try:
-                    query = db.lookup_query(eql)
-                    if query is None:
-                        compiled_query = await compiler.call(
-                            'compile_edgeql', con._dbname, eql)
-                        query = db.add_query(eql, compiled_query)
-                finally:
-                    self._cpool.release(compiler)
+            query = await self._epool.parse(con, eql)
         except Exception as ex:
             callback(None, None, ex)
         else:
             callback(stmt_name, query.compiled, None)
 
     async def _execute(self, con, query, bind_args: bytes):
-        holder = await self._pgpool.acquire(con._dbname)
-        try:
-            data = await holder.connection.execute_anonymous(
-                query.sql, bind_args)
-            con._on_server_execute_data(data)
-        finally:
-            self._pgpool.release(holder)
+        await self._epool.execute(con, query, bind_args)
+        con._on_server_execute_data()
 
-    async def _simple_query(self, con, script):
+    # async def _simple_query(self, con, script):
 
-        ca = self._cluster.get_connection_spec()
-        host = ca.get('host', '')
-        port = ca.get('port', '')
-        p = PGConParams(con.get_user(), '', con.get_dbname())
+    #     ca = self._cluster.get_connection_spec()
+    #     host = ca.get('host', '')
+    #     port = ca.get('port', '')
+    #     p = PGConParams(con.get_user(), '', con.get_dbname())
 
-        addr = os.path.join(host, f'.s.PGSQL.{port}')
+    #     addr = os.path.join(host, f'.s.PGSQL.{port}')
 
-        con_fut = self._loop.create_future()
+    #     con_fut = self._loop.create_future()
 
-        tr, pr = await self._loop.create_unix_connection(
-            lambda: core.PGProto(f'{host}:{port}', con_fut, p, self._loop),
-            addr)
+    #     tr, pr = await self._loop.create_unix_connection(
+    #         lambda: core.PGProto(f'{host}:{port}', con_fut, p, self._loop),
+    #         addr)
 
-        try:
-            await con_fut
+    #     try:
+    #         await con_fut
 
-            data = await pr.simple_query(script.encode(), None)
-            con._on_server_simple_query(data)
-        finally:
-            tr.abort()
+    #         data = await pr.simple_query(script.encode(), None)
+    #         con._on_server_simple_query(data)
+    #     finally:
+    #         tr.abort()
 
     async def start(self):
         if self._serving:
@@ -171,16 +144,13 @@ class Server(core.CoreServer):
             host = pg_con_spec.get("host")
             port = pg_con_spec.get("port")
 
-        self._cpool = await compilerpool.create_pool(
-            capacity=concurrency,
-            runstate_dir=self._runstate_dir,
-            connection_spec=pg_con_spec)
+        pgaddr = os.path.join(host, f'.s.PGSQL.{port}')
+        self._epool = executor.ExecutorPool(server=self,
+                                            concurrency=concurrency,
+                                            runstate_dir=self._runstate_dir,
+                                            pgaddr=pgaddr)
 
-        self._pgpool = pgpool.PGPool(
-            loop=asyncio.get_running_loop(),
-            max_capacity=math.ceil(concurrency * 1.5),
-            concurrency=concurrency,
-            pgaddr=os.path.join(host, f'.s.PGSQL.{port}'))
+        await self._epool.start()
 
         for iface in self._interfaces:
             srv = await self._loop.create_server(
@@ -188,5 +158,6 @@ class Server(core.CoreServer):
             self._servers.append(srv)
 
     async def stop(self):
-        await self._cpool.stop()
-        self._cpool = None
+        if self._epool is not None:
+            await self._epool.stop()
+            self._epool = None

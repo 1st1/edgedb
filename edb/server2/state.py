@@ -21,7 +21,13 @@ import dataclasses
 import typing
 
 from edb.server import defines
+
+from . import avg
 from . import lru
+
+
+_QUERY_ROLLING_AVG_LEN = 10
+_QUERIES_ROLLING_AVG_LEN = 300
 
 
 @dataclasses.dataclass(frozen=True)
@@ -41,6 +47,9 @@ class CompiledQuery:
 class Query:
 
     compiled: typing.Optional[CompiledQuery]
+
+    def __post_init__(self):
+        self.exec_avg = avg.RollingAverage(_QUERY_ROLLING_AVG_LEN)
 
 
 @dataclasses.dataclass

@@ -142,8 +142,7 @@ cdef class EdgeConnection:
         else:
             raise exc
 
-    def _on_server_execute_data(self, data):
-        self._write(data)
+    def _on_server_execute_data(self):
         self._state = EDGEPROTO_IDLE
         self._resume_parsing()
 
@@ -273,6 +272,9 @@ cdef class EdgeConnection:
 
         self._con_status = EDGECON_STARTED
         return True
+
+    def _send_data(self, data):
+        self._transport.write(data)
 
     def get_user(self):
         return self._user

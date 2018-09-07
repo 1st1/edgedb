@@ -68,7 +68,7 @@ cdef class PGProto(CorePGProto):
             self.transport.pause_reading()
 
     @cython.iterable_coroutine
-    async def execute_anonymous(self, bytes query, bytes bind_data):
+    async def execute_anonymous(self, egdecon, bytes query, bytes bind_data):
         if self.cancel_waiter is not None:
             await self.cancel_waiter
         if self.cancel_sent_waiter is not None:
@@ -82,7 +82,7 @@ cdef class PGProto(CorePGProto):
 
         waiter = self._new_waiter()
         try:
-            self._execute_anonymous(query, bind_data)  # network op
+            self._execute_anonymous(egdecon, query, bind_data)  # network op
             self.last_query = query
         except Exception as ex:
             waiter.set_exception(ex)
@@ -213,7 +213,7 @@ cdef class PGProto(CorePGProto):
         waiter.set_result(True)
 
     cdef _on_result__execute_anonymous(self, object waiter):
-        waiter.set_result(bytes(self.result_data))
+        waiter.set_result(True)
 
     cdef _dispatch_result(self):
         waiter = self.waiter

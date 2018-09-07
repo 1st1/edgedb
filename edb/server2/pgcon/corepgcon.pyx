@@ -34,6 +34,8 @@ cdef class CorePGProto:
         self.xact_status = PQTRANS_IDLE
         self.encoding = 'utf-8'
 
+        self.edgecon = None
+
         self._skip_discard = False
 
         self._reset_result()
@@ -172,12 +174,25 @@ cdef class CorePGProto:
                 self.result_data = WriteBuffer.new()
             self.buffer.consume_full_messages(self.result_data, b'D')
 
+            if self.result_data.len() > 20000:
+                self.edgecon._send_data(self.result_data)
+                self.result_data = None
+
+            if self.buffer.has_message():
+                self._skip_discard = True
+                return
+
         elif mtype == b's':
             # PortalSuspended
             self.buffer.consume_message()
 
         elif mtype == b'C':
             # CommandComplete
+            if self.result_data is not None:
+                self.edgecon._send_data(self.result_data)
+                self.result_data = None
+
+            self.edgecon = None
             self.result_execute_completed = True
             self._parse_msg_command_complete()
 
@@ -375,13 +390,16 @@ cdef class CorePGProto:
         outbuf.write_buffer(buf)
         self._write(outbuf)
 
-    cdef _execute_anonymous(self, bytes query, bytes bind_data):
+    cdef _execute_anonymous(self, edgecon, bytes query, bytes bind_data):
         cdef:
             WriteBuffer packet
             WriteBuffer buf
 
         self._ensure_connected()
         self._set_state(PGPROTO_EXECUTE_ANONYMOUS)
+
+        assert self.edgecon is None
+        self.edgecon = edgecon
 
         packet = WriteBuffer.new()
 
