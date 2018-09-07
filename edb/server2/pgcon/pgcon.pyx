@@ -68,15 +68,14 @@ cdef class PGProto(CorePGProto):
             self.transport.pause_reading()
 
     @cython.iterable_coroutine
-    async def execute_anonymous(self, egdecon, bytes query, bytes bind_data):
+    async def execute_anonymous(self, egdecon, bytes query,
+                                WriteBuffer bind_data):
+
         if self.cancel_waiter is not None:
             await self.cancel_waiter
         if self.cancel_sent_waiter is not None:
             await self.cancel_sent_waiter
             self.cancel_sent_waiter = None
-
-        if not bind_data:
-            bind_data = b''
 
         self._check_state()
 

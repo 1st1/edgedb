@@ -18,6 +18,7 @@
 
 
 import asyncio
+import enum
 import math
 import time
 
@@ -25,6 +26,12 @@ from . import avg
 from . import compilerpool
 from . import pgpool
 from . import state
+
+
+class CommandType(enum.Enum):
+
+    PARSE = 1
+    EXECUTE = 2
 
 
 class ExecutorPool:
@@ -96,7 +103,7 @@ class ExecutorPool:
 
         return query
 
-    async def execute(self, con, query: state.Query, bind_args: bytes):
+    async def execute(self, con, query: state.Query, bind_args):
         st = time.monotonic()
         holder = await self._pgpool.acquire(con._dbname)
         ah = time.monotonic()

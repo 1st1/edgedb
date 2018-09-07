@@ -87,6 +87,7 @@ cdef class EdgeConnection:
                 print("EXCEPTION", type(ex), ex)
                 self._state = EDGEPROTO_CLOSED
                 self._transport.close()
+                raise
                 return
             finally:
                 self.buffer.discard_message()
@@ -232,7 +233,7 @@ cdef class EdgeConnection:
         # all parameters are in binary
         out_buf.write_int32(0x00010001)
 
-        b = in_buf.read(4)  # ignore buffer length
+        in_buf.read(4)  # ignore buffer length
 
         # number of elements in the tuple
         argsnum = hton.unpack_int32(in_buf.read(4))
@@ -244,8 +245,7 @@ cdef class EdgeConnection:
 
         # All columns are in binary format
         out_buf.write_int32(0x00010001)
-
-        return bytes(out_buf)
+        return out_buf
 
     cdef _handle__execute(self):
         stmt_name = self.buffer.read_utf8()

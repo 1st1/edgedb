@@ -390,7 +390,7 @@ cdef class CorePGProto:
         outbuf.write_buffer(buf)
         self._write(outbuf)
 
-    cdef _execute_anonymous(self, edgecon, bytes query, bytes bind_data):
+    cdef _execute_anonymous(self, edgecon, bytes query, WriteBuffer bind_data):
         cdef:
             WriteBuffer packet
             WriteBuffer buf
@@ -412,7 +412,7 @@ cdef class CorePGProto:
         buf = WriteBuffer.new_message(b'B')
         buf.write_bytestring(b'')  # portal name
         buf.write_bytestring(b'')  # statement name
-        buf.write_bytes(bind_data)
+        buf.write_buffer(bind_data)
         packet.write_buffer(buf.end_message())
 
         buf = WriteBuffer.new_message(b'E')

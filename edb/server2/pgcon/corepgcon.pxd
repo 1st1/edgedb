@@ -123,7 +123,7 @@ cdef class CorePGProto:
 
 
     cdef _connect(self)
-    cdef _execute_anonymous(self, edgecon, bytes query, bytes bind_data)
+    cdef _execute_anonymous(self, edgecon, bytes query, WriteBuffer bind_data)
 
     cdef _terminate(self)
 

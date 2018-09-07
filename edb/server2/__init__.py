@@ -97,7 +97,7 @@ class Server(core.CoreServer):
         else:
             callback(stmt_name, query.compiled, None)
 
-    async def _execute(self, con, query, bind_args: bytes):
+    async def _execute(self, con, query, bind_args):
         await self._epool.execute(con, query, bind_args)
         con._on_server_execute_data()
 
