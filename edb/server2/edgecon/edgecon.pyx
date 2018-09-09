@@ -132,8 +132,8 @@ cdef class EdgeConnection:
             self._queries[stmt_name] = q
 
             buf = WriteBuffer.new_message(b'1')  # ParseComplete
-            buf.write_bytestring(q.out_type_id)
-            buf.write_bytestring(q.in_type_id)
+            buf.write_bytestring(q.compiled.out_type_id)
+            buf.write_bytestring(q.compiled.in_type_id)
             buf.end_message()
 
             self._write(buf)
@@ -209,10 +209,10 @@ cdef class EdgeConnection:
             q = self._queries[stmt_name]
 
             msg = WriteBuffer.new_message(b'T')
-            msg.write_int16(len(q.out_type_data))
-            msg.write_bytes(q.out_type_data)
-            msg.write_int16(len(q.in_type_data))
-            msg.write_bytes(q.in_type_data)
+            msg.write_int16(len(q.compiled.out_type_data))
+            msg.write_bytes(q.compiled.out_type_data)
+            msg.write_int16(len(q.compiled.in_type_data))
+            msg.write_bytes(q.compiled.in_type_data)
             msg.end_message()
             self._write(msg)
             self._resume_parsing()

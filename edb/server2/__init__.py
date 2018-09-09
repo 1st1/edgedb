@@ -17,6 +17,7 @@
 #
 
 
+import asyncio
 import os
 import typing
 import urllib.parse
@@ -87,7 +88,7 @@ class Server(core.CoreServer):
         db = self._dbindex.get(con._dbname)
         query = db.lookup_query(eql)
         if query:
-            return query.compiled
+            return query
 
     async def _parse(self, con, stmt_name, eql, callback):
         try:
@@ -95,11 +96,10 @@ class Server(core.CoreServer):
         except Exception as ex:
             callback(None, None, ex)
         else:
-            callback(stmt_name, query.compiled, None)
+            callback(stmt_name, query, None)
 
     async def _execute(self, con, query, bind_args):
-        await self._epool.execute(con, query, bind_args)
-        con._on_server_execute_data()
+        self._epool.execute(con, query, bind_args)
 
     # async def _simple_query(self, con, script):
 
@@ -144,8 +144,11 @@ class Server(core.CoreServer):
             host = pg_con_spec.get("host")
             port = pg_con_spec.get("port")
 
+        loop = asyncio.get_running_loop()
+
         pgaddr = os.path.join(host, f'.s.PGSQL.{port}')
-        self._epool = executor.ExecutorPool(server=self,
+        self._epool = executor.ExecutorPool(loop=loop,
+                                            server=self,
                                             concurrency=concurrency,
                                             runstate_dir=self._runstate_dir,
                                             pgaddr=pgaddr)

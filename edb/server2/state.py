@@ -49,7 +49,14 @@ class Query:
     compiled: typing.Optional[CompiledQuery]
 
     def __post_init__(self):
-        self.exec_avg = avg.RollingAverage(_QUERY_ROLLING_AVG_LEN)
+        self._exec_avg = avg.RollingAverage(_QUERY_ROLLING_AVG_LEN)
+
+    def log_time(self, delta):
+        self._exec_avg.add(delta)
+
+    @property
+    def avg(self):
+        return self._exec_avg.avg
 
 
 @dataclasses.dataclass
