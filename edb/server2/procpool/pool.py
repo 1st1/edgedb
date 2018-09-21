@@ -21,6 +21,7 @@ import asyncio
 import base64
 import os.path
 import pickle
+import subprocess
 import sys
 
 from edb.server2 import taskgroup
@@ -65,7 +66,9 @@ class Worker:
             self._proc = None
 
         self._proc = await asyncio.create_subprocess_exec(
-            *self._command_args, env=_ENV)
+            *self._command_args,
+            env=_ENV,
+            stdin=subprocess.DEVNULL)
         try:
             self._con = await asyncio.wait_for(
                 self._server.get_by_pid(self._proc.pid),

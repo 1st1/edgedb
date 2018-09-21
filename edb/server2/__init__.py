@@ -52,13 +52,17 @@ class BinaryInterface(Interface):
 
 class Server(core.CoreServer):
 
-    def __init__(self, loop, cluster, runstate_dir):
+    def __init__(self, *, loop, cluster, runstate_dir,
+                 concurrency, max_backend_connections):
         super().__init__(loop)
         self._serving = False
         self._interfaces = []
         self._servers = []
         self._cluster = cluster
+
         self._runstate_dir = runstate_dir
+        self._concurrency = concurrency
+        self._max_backend_connections = max_backend_connections
 
         self._epool = None
         self._edgecon_id = 0
@@ -129,8 +133,6 @@ class Server(core.CoreServer):
             raise RuntimeError('already serving')
         self._serving = True
 
-        concurrency = 4
-
         self._dbindex = state.DatabasesIndex()
 
         pg_con_spec = self._cluster.get_connection_spec()
@@ -147,11 +149,13 @@ class Server(core.CoreServer):
         loop = asyncio.get_running_loop()
 
         pgaddr = os.path.join(host, f'.s.PGSQL.{port}')
-        self._epool = executor.ExecutorPool(loop=loop,
-                                            server=self,
-                                            concurrency=concurrency,
-                                            runstate_dir=self._runstate_dir,
-                                            pgaddr=pgaddr)
+        self._epool = executor.ExecutorPool(
+            loop=loop,
+            server=self,
+            concurrency=self._concurrency,
+            max_backend_connections=self._max_backend_connections,
+            runstate_dir=self._runstate_dir,
+            pgaddr=pgaddr)
 
         await self._epool.start()
 

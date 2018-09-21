@@ -134,7 +134,12 @@ def _run_server(cluster, args, runstate_dir):
         # Notify systemd that we've started up.
         _sd_notify('READY=1')
 
-        ss = server2.Server(loop, cluster, runstate_dir)
+        ss = server2.Server(
+            loop=loop,
+            cluster=cluster,
+            runstate_dir=runstate_dir,
+            concurrency=args['concurrency'],
+            max_backend_connections=args['max_backend_connections'])
         ss.add_binary_interface(args['bind_address'], args['port'] + 1)
         loop.run_until_complete(ss.start())
         logger.info(
@@ -278,6 +283,10 @@ def run_server(args):
     '--runstate-dir', type=str, default=None,
     help=('directory where UNIX sockets will be created '
           '("/run" on Linux by default)'))
+@click.option(
+    '--concurrency', type=int, default=os.cpu_count())
+@click.option(
+    '--max-backend-connections', type=int, default=100)
 def main(**kwargs):
     logsetup.setup_logging(kwargs['log_level'], kwargs['log_to'])
     exceptions.install_excepthook()

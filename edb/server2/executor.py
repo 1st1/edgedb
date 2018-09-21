@@ -20,7 +20,6 @@
 import asyncio
 import collections
 import enum
-import math
 import time
 
 from . import avg
@@ -70,11 +69,15 @@ class AvgWeightedQueue:
 
         self._wakeup_next()
 
-    def _wakeup_next(self):
+    def _wakeup_fast(self):
         if self._fast_waiters and self._fast:
             fut = self._fast_waiters.popleft()
             assert not fut.done()
             fut.set_result(True)
+
+    def _wakeup_next(self):
+        if self._fast_waiters and self._fast:
+            self._wakeup_fast()
 
         elif self._new_or_fast_waiters and (self._fast or self._new):
             fut = self._new_or_fast_waiters.popleft()
@@ -153,6 +156,7 @@ class ExecutorPool:
                  loop,
                  server,
                  concurrency: int,
+                 max_backend_connections: int,
                  pgaddr: str,
                  runstate_dir: str):
 
@@ -162,17 +166,24 @@ class ExecutorPool:
         self._concurrency = concurrency
         self._pgaddr = pgaddr
         self._runstate_dir = runstate_dir
+        self._max_backend_connections = max_backend_connections
 
         self._queue = AvgWeightedQueue(loop=loop)
 
         slow_num = max(self._concurrency // 2, 1)
         new_num = max(self._concurrency // 4, 1)
-        fast_num = max(self._concurrency - slow_num - new_num, 1)
+        fast_num = max(self._concurrency - slow_num - new_num, new_num)
 
-        slow_execs = [SlowExecutor(self) for _ in range(slow_num)]
-        fast_execs = [FastExecutor(self) for _ in range(fast_num)]
-        new_or_fast_execs = [NewOrFastExecutor(self) for _ in range(new_num)]
-        self._executors = fast_execs + new_or_fast_execs + slow_execs
+        # Initialize executor-workers: they process one-shot queries
+        # (i.e. queries that don't need to be run in a transaction.)
+        slow_execs = [SlowExecutorWorker(self) for _ in range(slow_num)]
+        fast_execs = [FastExecutorWorker(self) for _ in range(fast_num)]
+        new_or_fast_execs = [NewOrFastExecutorWorker(self)
+                             for _ in range(new_num)]
+        self._workers = fast_execs + new_or_fast_execs + slow_execs
+
+        self._cons_in_workers = {}
+        self._cons_in_tx = {}
 
         self._cpool = None
         self._pgpool = None
@@ -187,19 +198,19 @@ class ExecutorPool:
 
         self._pgpool = pgpool.PGPool(
             loop=asyncio.get_running_loop(),
-            max_capacity=math.ceil(self._concurrency * 1.5),
+            max_capacity=self._max_backend_connections,
             concurrency=self._concurrency,
             pgaddr=self._pgaddr)
 
-        for e in self._executors:
-            self._loop.create_task(e.run())
+        for e in self._workers:
+            await e.start()
 
         async def foo():
             while True:
                 await asyncio.sleep(8)
                 print('====', self._queue._avg.avg)
-                for e in self._executors:
-                    print(e, e._nq)
+                for e in self._workers:
+                    print(e, e._num_queries)
         asyncio.create_task(foo())
 
     async def stop(self):
@@ -211,15 +222,21 @@ class ExecutorPool:
             await self._pgpool.close()
             self._pgpool = None
 
+        for w in self._workers:
+            await w.stop()
+
     async def authorize(self, dbname: str, user: str, password: str):
         db = self._server._dbindex.get(dbname)
         if db is None:
-            # XXX actually validate (user, password)
+            # XXX (beta TODO) actually validate user and password!
+            # Right now we only check that the DB actually exists
+            # by acquiring a PG connection to it.
             holder = await self._pgpool.acquire(dbname)
             self._pgpool.release(holder)
+
+            # There can be a race between acquiring a connection
+            # and registering a DB, so check first.
             if self._server._dbindex.get(dbname) is None:
-                # There can be a race between acquiring a connection
-                # and registering a db.
                 self._server._dbindex.register(dbname)
 
     async def parse(self, con, eql: str) -> state.Query:
@@ -253,19 +270,19 @@ class ExecutorPool:
         #     self._pgpool.release(holder)
 
 
-class BaseExecutor:
+class BaseExecutorWorker:
 
     def __init__(self, epool):
         self._epool = epool
-        self._nq = 0
+        self._num_queries = 0
+        self._run_task = None
 
-    async def get_work_item(self):
+    async def _get_work_item(self):
         raise NotImplementedError
 
-    async def run(self):
+    async def _run(self):
         while True:
-            self._nq += 1
-            con, query, bind_args = await self.get_work_item()
+            con, query, bind_args = await self._get_work_item()
             holder = await self._epool._pgpool.acquire(con._dbname)
 
             started_at = time.monotonic()
@@ -278,24 +295,39 @@ class BaseExecutor:
                 con._on_server_execute_data()
 
                 dur = time.monotonic() - started_at
-                # print(f'{self} {dur:.3f}s')
                 self._epool._queue.log_time(dur)
                 query.log_time(dur)
 
+                self._num_queries += 1
 
-class SlowExecutor(BaseExecutor):
+    async def start(self):
+        self._run_task = self._epool._loop.create_task(self._run())
 
-    async def get_work_item(self):
+    async def stop(self):
+        if self._run_task:
+            rn = self._run_task
+            self._run_task = None
+
+            rn.cancel()
+            try:
+                await rn
+            except asyncio.CancelledError:
+                pass
+
+
+class SlowExecutorWorker(BaseExecutorWorker):
+
+    async def _get_work_item(self):
         return await self._epool._queue.pop_slow()
 
 
-class FastExecutor(BaseExecutor):
+class FastExecutorWorker(BaseExecutorWorker):
 
-    async def get_work_item(self):
+    async def _get_work_item(self):
         return await self._epool._queue.pop_fast()
 
 
-class NewOrFastExecutor(BaseExecutor):
+class NewOrFastExecutorWorker(BaseExecutorWorker):
 
-    async def get_work_item(self):
+    async def _get_work_item(self):
         return await self._epool._queue.pop_new_or_fast()
