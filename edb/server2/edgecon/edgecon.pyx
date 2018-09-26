@@ -17,23 +17,49 @@
 #
 
 
+import asyncio
+
+
 cdef class EdgeConnection:
 
-    def __init__(self, CoreServer server):
+    def __init__(self, loop, executor):
         self._con_status = EDGECON_NEW
         self._state = EDGEPROTO_AUTH
         self._server = server
         self._id = self._server.new_edgecon_id()
-        self._dbname = None
-        self._user = None
 
-        self._queries = {}
+        self.loop = loop
+        self.executor = executor
+        self.dbview = None
 
         self._transport = None
         self.buffer = ReadBuffer()
 
         self._parsing = True
         self._reading_messages = False
+
+        self._awaiting_task = None
+
+    # Awaiting on executor methods
+
+    cdef _await(self, coro, success, failure):
+        if self._awaiting_task is not None:
+            raise RuntimeError('already awaiting')
+
+        self._awaiting_task = self.loop.create_task(coro)
+        self._awaiting_task.add_done_callback(
+            lambda task: self._await_done(task, success, failure))
+
+    def _await_done(self, task, success, failure):
+        self._awaiting_task = None
+        if task.cancelled():
+            failure(asyncio.CancelledError())
+        else:
+            exc = task.exception()
+            if exc is None:
+                success(task.result())
+            else:
+                failure(exc)
 
     cdef _pause_parsing(self):
         self._parsing = False
@@ -93,56 +119,6 @@ cdef class EdgeConnection:
                 self.buffer.discard_message()
                 self._reading_messages = False
 
-    def _on_server_auth(self, exc):
-        cdef:
-            WriteBuffer msg_buf
-            WriteBuffer buf
-
-        if exc is None:
-            # connection OK
-
-            buf = WriteBuffer()
-
-            msg_buf = WriteBuffer.new_message(b'R')
-            msg_buf.write_int32(0)
-            msg_buf.end_message()
-            buf.write_buffer(msg_buf)
-
-            msg_buf = WriteBuffer.new_message(b'K')
-            msg_buf.write_int32(0)  # TODO: should send ID of this connection
-            msg_buf.end_message()
-            buf.write_buffer(msg_buf)
-
-            msg_buf = WriteBuffer.new_message(b'Z')
-            msg_buf.write_byte(b'I')
-            msg_buf.end_message()
-            buf.write_buffer(msg_buf)
-
-            self._write(buf)
-
-            self._state = EDGEPROTO_IDLE
-            self._resume_parsing()
-
-        else:
-            # couldn't connect
-            1 / 0
-
-    def _on_server_parse(self, stmt_name, q, exc):
-        if exc is None:
-            self._queries[stmt_name] = q
-
-            buf = WriteBuffer.new_message(b'1')  # ParseComplete
-            buf.write_bytestring(q.compiled.out_type_id)
-            buf.write_bytestring(q.compiled.in_type_id)
-            buf.end_message()
-
-            self._write(buf)
-
-            self._state = EDGEPROTO_IDLE
-            self._resume_parsing()
-        else:
-            raise exc
-
     def _on_server_execute_data(self):
         self._state = EDGEPROTO_IDLE
         self._resume_parsing()
@@ -161,19 +137,91 @@ cdef class EdgeConnection:
         self._state = EDGEPROTO_IDLE
         self._resume_parsing()
 
+    def _on__failure(self, exc):
+        raise exc
+
+    ##### Authentication
+
     cdef _handle__auth(self, char mtype):
         if mtype == b'0':
             user = self.buffer.read_utf8()
             password = self.buffer.read_utf8()
             database = self.buffer.read_utf8()
-            self._dbname = database
-            self._user = user
 
-            # The server will call the "_on_server_auth" callback
-            # once we verify the database name and user/password.
-            self._server.edgecon_authorize(self, user, password, database)
+            self._await(
+                self.executor.authorize(database, user, password),
+                self._on__auth_success,
+                self._on__failure)
 
+        self._resume_parsing()  # XXX ?
+
+    def _on__auth_success(self, dbview):
+        cdef:
+            WriteBuffer msg_buf
+            WriteBuffer buf
+
+        self.dbview = dbview
+
+        # connection OK
+
+        buf = WriteBuffer()
+
+        msg_buf = WriteBuffer.new_message(b'R')
+        msg_buf.write_int32(0)
+        msg_buf.end_message()
+        buf.write_buffer(msg_buf)
+
+        msg_buf = WriteBuffer.new_message(b'K')
+        msg_buf.write_int32(0)  # TODO: should send ID of this connection
+        msg_buf.end_message()
+        buf.write_buffer(msg_buf)
+
+        msg_buf = WriteBuffer.new_message(b'Z')
+        msg_buf.write_byte(b'I')
+        msg_buf.end_message()
+        buf.write_buffer(msg_buf)
+
+        self._write(buf)
+
+        self._state = EDGEPROTO_IDLE
         self._resume_parsing()
+
+    ##### Parse
+
+    cdef _handle__parse(self):
+        stmt_name = self.buffer.read_utf8()
+        eql = self.buffer.read_utf8()
+
+        if stmt_name == '':
+            # anonymous query; try fast path
+            compiled = self.dbview.lookup_anonymous_compiled_query(eql)
+            if compiled is not None:
+                self._on__parse_success(compiled)
+                return
+        else:
+            q = self.dbview.lookup_prepared_query(stmt_name)
+            if q is not None:
+                # XXX
+                raise RuntimeError(
+                    f'a prepared statement named {stmt_name!r} already exists')
+
+        self._await(
+            self.executor.parse(con, stmt_name, eql),
+            self._on__parse_success,
+            self._on__failure)
+
+    def _on__parse_success(self, compiled):
+        buf = WriteBuffer.new_message(b'1')  # ParseComplete
+        buf.write_bytestring(compiled.out_type_id)
+        buf.write_bytestring(compiled.in_type_id)
+        buf.end_message()
+
+        self._write(buf)
+
+        self._state = EDGEPROTO_IDLE
+        self._resume_parsing()
+
+    #####
 
     cdef _handle__sync(self):
         cdef WriteBuffer msg_buf
@@ -186,16 +234,6 @@ cdef class EdgeConnection:
     cdef _handle__simple_query(self):
         query = self.buffer.read_utf8()
         self._server.edgecon_simple_query(self, query)
-
-    cdef _handle__parse(self):
-        stmt_name = self.buffer.read_utf8()
-        query = self.buffer.read_utf8()
-
-        compiled = self._server._parse_no_wait(self, query)
-        if compiled is not None:
-            self._on_server_parse(stmt_name, compiled, None)
-        else:
-            self._server.edgecon_parse(self, stmt_name, query)
 
     cdef _handle__describe(self):
         cdef:

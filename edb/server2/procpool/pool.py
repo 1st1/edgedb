@@ -23,12 +23,14 @@ import os.path
 import pickle
 import subprocess
 import sys
+import time
 
 from edb.server2 import taskgroup
 
 from . import amsg
 
 
+GC_INTERVAL = 60.0 * 3
 PROCESS_INITIAL_RESPONSE_TIMEOUT = 10.0
 KILL_TIMEOUT = 10.0
 WORKER_MOD = __name__.rpartition('.')[0] + '.worker'
@@ -47,6 +49,7 @@ class Worker:
         self._command_args = command_args
         self._proc = None
         self._con = None
+        self._last_used = time.monotonic()
 
     async def _kill_proc(self, proc):
         try:
@@ -84,6 +87,9 @@ class Worker:
         msg = pickle.dumps((method_name, args))
         data = await self._con.request(msg)
         status, data = pickle.loads(data)
+
+        self._last_used = time.monotonic()
+
         if status == 0:
             return data
         else:
@@ -96,12 +102,22 @@ class Worker:
 class Pool:
 
     def __init__(self, *, worker_cls, worker_args,
-                 loop, capacity, runstate_dir, name):
+                 loop,
+                 max_capacity,
+                 min_capacity,
+                 runstate_dir,
+                 name,
+                 gc_interval=GC_INTERVAL):
         self._worker_cls = worker_cls
         self._worker_args = worker_args
 
         self._loop = loop
-        self._capacity = capacity
+
+        self._max_capacity = max_capacity
+        self._min_capacity = min_capacity
+        self._capacity = 0
+        self._gc_interval = gc_interval
+
         self._runstate_dir = runstate_dir
 
         self._name = name
@@ -110,9 +126,11 @@ class Pool:
 
         self._workers_queue = asyncio.Queue(loop=loop)
         self._watchers = []
-        self._workers = []
+        self._workers = set()
 
         self._server = amsg.Server(self._poolsock_name, loop)
+
+        self._gc_task = None
 
         self._worker_command_args = [
             sys.executable, '-m', WORKER_MOD,
@@ -124,13 +142,58 @@ class Pool:
             '--sockname', self._poolsock_name
         ]
 
-    async def _spawn_worker(self):
-        worker = Worker(self._server, self._worker_command_args)
-        await worker._spawn()
-        self._workers.append(worker)
-        self._workers_queue.put_nowait(worker)
+    async def _worker_gc(self):
+        while True:
+            await asyncio.sleep(self._gc_interval)
+
+            workers_to_kill = set()
+            while (self._capacity > self._min_capacity and
+                    not self._workers_queue.empty()):
+
+                worker = self._workers_queue.get_nowait()
+                workers_to_kill.add(worker)
+
+            if not workers_to_kill:
+                continue
+
+            now = time.monotonic()
+
+            for worker in workers_to_kill:
+                if now - worker._last_used > self._gc_interval:
+                    worker.close()
+                    workers_to_kill.discard(worker)
+                    self._workers.discard(worker)
+                    self._capacity -= 1
+
+            for worker in workers_to_kill:
+                self._workers_queue.put_nowait(worker)
+
+    async def _spawn_worker(self, *, enqueue=True):
+        self._capacity += 1
+        try:
+            worker = Worker(self._server, self._worker_command_args)
+            await worker._spawn()
+            self._workers.add(worker)
+            if enqueue:
+                self._workers_queue.put_nowait(worker)
+        except Exception:
+            self._capacity -= 1
+            raise
+        else:
+            return worker
 
     async def acquire(self):
+        if self._gc_task is None:
+            raise RuntimeError('the process pool is not running')
+
+        if self._gc_task.done():
+            # Did it crash?  This is not normal.
+            self._gc_task.result()
+            raise RuntimeError('the process pool is in an undefined state')
+
+        if self._workers_queue.empty() and self._capacity < self._max_capacity:
+            return await self._spawn_worker(enqueue=False)
+
         return await self._workers_queue.get()
 
     def release(self, worker):
@@ -150,20 +213,29 @@ class Pool:
             async with taskgroup.TaskGroup(
                     name=f'{self._name}-pool-spawn') as g:
 
-                for i in range(self._capacity):
+                for i in range(self._min_capacity):
                     g.create_task(self._spawn_worker())
 
         except taskgroup.TaskGroupError:
             await self.stop()
             raise
 
+        self._gc_task = asyncio.create_task(self._worker_gc())
+
     async def stop(self):
         await self._server.stop()
+
+        self._gc_task.cancel()
+        try:
+            await self._gc_task
+        except asyncio.CancelledError:
+            pass
+        self._gc_task = None
 
         for worker in self._workers:
             worker.close()
 
-        self._workers = []
+        self._workers.clear()
 
 
 async def create_pool(*, capacity: int, runstate_dir: str, name: str,

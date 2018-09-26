@@ -16,16 +16,19 @@
 # limitations under the License.
 #
 
-
 import asyncio
 import collections
-import enum
 import time
+import typing
+
+from edb.server import defines
 
 from . import avg
 from . import compilerpool
+from . import database
 from . import pgpool
-from . import state
+from . import query
+from . import taskgroup
 
 
 class AvgWeightedQueue:
@@ -41,7 +44,7 @@ class AvgWeightedQueue:
         self._new_or_fast_waiters = collections.deque()
         self._slow_waiters = collections.deque()
 
-        self._avg = avg.RollingAverage(state._QUERIES_ROLLING_AVG_LEN)
+        self._avg = avg.RollingAverage(defines._QUERIES_ROLLING_AVG_LEN)
         self._cnt = 0
 
     def log_time(self, delta):
@@ -69,15 +72,11 @@ class AvgWeightedQueue:
 
         self._wakeup_next()
 
-    def _wakeup_fast(self):
+    def _wakeup_next(self):
         if self._fast_waiters and self._fast:
             fut = self._fast_waiters.popleft()
             assert not fut.done()
             fut.set_result(True)
-
-    def _wakeup_next(self):
-        if self._fast_waiters and self._fast:
-            self._wakeup_fast()
 
         elif self._new_or_fast_waiters and (self._fast or self._new):
             fut = self._new_or_fast_waiters.popleft()
@@ -144,24 +143,18 @@ class AvgWeightedQueue:
         return item
 
 
-class CommandType(enum.Enum):
-
-    PARSE = 1
-    EXECUTE = 2
-
-
-class ExecutorPool:
+class Executor:
 
     def __init__(self, *,
                  loop,
-                 server,
                  concurrency: int,
                  max_backend_connections: int,
                  pgaddr: str,
                  runstate_dir: str):
 
-        self._server = server
         self._loop = loop
+
+        self._dbindex = database.DatabaseIndex()
 
         self._concurrency = concurrency
         self._pgaddr = pgaddr
@@ -189,8 +182,14 @@ class ExecutorPool:
         self._pgpool = None
 
     async def start(self):
+        # The compiler pool needs to have max capacity greater than
+        # "max_backend_connections" as we can have as many
+        # Edge connections in transaction mode (and some Edge connections
+        # in transaction might need a compiler worker until the transaction
+        # ends).
         self._cpool = await compilerpool.create_pool(
-            capacity=self._concurrency,
+            min_capacity=self._concurrency + 1,
+            max_capacity=self._max_backend_connections + self._concurrency + 1,
             runstate_dir=self._runstate_dir,
             connection_spec={
                 'host': self._pgaddr
@@ -202,16 +201,9 @@ class ExecutorPool:
             concurrency=self._concurrency,
             pgaddr=self._pgaddr)
 
-        for e in self._workers:
-            await e.start()
-
-        async def foo():
-            while True:
-                await asyncio.sleep(8)
-                print('====', self._queue._avg.avg)
-                for e in self._workers:
-                    print(e, e._num_queries)
-        asyncio.create_task(foo())
+        async with taskgroup.TaskGroup() as g:
+            for e in self._workers:
+                g.create_task(e.start())
 
     async def stop(self):
         if self._cpool is not None:
@@ -226,8 +218,7 @@ class ExecutorPool:
             await w.stop()
 
     async def authorize(self, dbname: str, user: str, password: str):
-        db = self._server._dbindex.get(dbname)
-        if db is None:
+        if not self._dbindex.is_registered(dbname):
             # XXX (beta TODO) actually validate user and password!
             # Right now we only check that the DB actually exists
             # by acquiring a PG connection to it.
@@ -236,12 +227,12 @@ class ExecutorPool:
 
             # There can be a race between acquiring a connection
             # and registering a DB, so check first.
-            if self._server._dbindex.get(dbname) is None:
-                self._server._dbindex.register(dbname)
+            if not self._dbindex.is_registered(dbname):
+                self._dbindex.register(dbname)
+        return self._dbindex.new_view(dbname, user=user)
 
-    async def parse(self, con, eql: str) -> state.Query:
-        db = self._server._dbindex.get(con._dbname)
-        query = db.lookup_query(eql)
+    async def parse(self, con, stmt_name, eql: str) -> query.Query:
+        # query = con.dbview.
         if query is None:
             compiler = await self._cpool.acquire()
             try:
@@ -255,8 +246,8 @@ class ExecutorPool:
 
         return query
 
-    def execute(self, con, query: state.Query, bind_args):
-        self._queue.enqueue(query.avg, (con, query, bind_args))
+    def execute(self, con, query: query.Query, bind_args):
+        self._queue.enqueue(query.exec_avg, (con, query, bind_args))
 
         # st = time.monotonic()
         # holder = await self._pgpool.acquire(con._dbname)

@@ -24,6 +24,7 @@ import asyncio
 import collections
 import dataclasses
 import struct
+import typing
 import uuid
 
 import asyncpg
@@ -39,12 +40,13 @@ from edb.lang.schema import error as s_err
 from edb.lang.schema import types as s_types
 
 from . import procpool
-from . import state
+from . import query
 
 
 @dataclasses.dataclass(frozen=True)
 class CompilerDatabaseState:
 
+    dbver: int
     name: str
     con_args: dict
     type_cache: object
@@ -274,15 +276,23 @@ class QueryResultsTypeSerializer:
 
 class Compiler:
 
+    _databases: typing.Dict[str, CompilerDatabaseState]
+
     def __init__(self, connect_args):
         self._connect_args = connect_args
         self._databases = {}
 
-    async def _get_database(self, dbname: str):
+    async def _get_database(self, dbname: str, dbver: int):
         try:
-            return self._databases[dbname]
+            db = self._databases[dbname]
         except KeyError:
             pass
+        else:
+            if db.dbver == dbver:
+                return db
+            else:
+                del self._databases[dbname]
+                db = None
 
         con_args = self._connect_args.copy()
         con_args['user'] = defines.EDGEDB_SUPERUSER
@@ -293,6 +303,7 @@ class Compiler:
             im = intromech.IntrospectionMech(con)
             schema = await im.getschema()
             db = CompilerDatabaseState(
+                dbver=dbver,
                 name=dbname,
                 con_args=con_args,
                 type_cache=im.type_cache,
@@ -346,14 +357,14 @@ class Compiler:
         in_type_data, in_type_id = QueryResultsTypeSerializer.describe(
             db, params_type, {})
 
-        return state.CompiledQuery(
+        return query.CompiledQuery(
             0,
             out_type_data, out_type_id.bytes,
             in_type_data, in_type_id.bytes,
             sql_text.encode(defines.EDGEDB_ENCODING))
 
-    async def compile_edgeql(self, dbname, eql):
-        db = await self._get_database(dbname)
+    async def compile_edgeql(self, dbname, dbver, eql):
+        db = await self._get_database(dbname, dbver)
         return self._compile(db, eql)
 
 

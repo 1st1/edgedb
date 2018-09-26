@@ -20,38 +20,6 @@
 # cython: language_level=3
 
 
-import collections
-
-
 include "./pgbase/pgbase.pyx"
-
 include "./edgecon/edgecon.pyx"
-
 include "./pgcon/pgcon.pyx"
-
-
-cdef class CoreServer:
-    def __init__(self, loop):
-        self._loop = loop
-
-    cdef edgecon_register(self, EdgeConnection con):
-        pass
-
-    cdef edgecon_unregister(self, EdgeConnection con):
-        pass
-
-    cdef edgecon_authorize(self, EdgeConnection con,
-                           str user, str password, str dbname):
-        self._loop.create_task(
-            self._authorize(user, password, dbname, con._on_server_auth))
-
-    cdef edgecon_parse(self, EdgeConnection con, str stmt_name, str query):
-        self._loop.create_task(
-            self._parse(con, stmt_name, query, con._on_server_parse))
-
-    cdef edgecon_execute(self, EdgeConnection con, query,
-                         WriteBuffer bind_args):
-        self._loop.create_task(self._execute(con, query, bind_args))
-
-    cdef edgecon_simple_query(self, EdgeConnection con, str query):
-        self._loop.create_task(self._simple_query(con, query))

@@ -341,12 +341,6 @@ setup(
             ["edb/server2/avg.pyx"],
             extra_compile_args=EXT_CFLAGS,
             extra_link_args=EXT_LDFLAGS),
-
-        distutils_extension.Extension(
-            "edb.server2.avg_queue",
-            ["edb/server2/avg_queue.pyx"],
-            extra_compile_args=EXT_CFLAGS,
-            extra_link_args=EXT_LDFLAGS),
     ],
     install_requires=RUNTIME_DEPS,
     extras_require=EXTRA_DEPS,

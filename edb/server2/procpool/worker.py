@@ -44,7 +44,7 @@ async def run_worker(cls_name, cls_args, sockname):
         try:
             methname, args = pickle.loads(req)
         except Exception as ex:
-            ex = _filter_error(ex)
+            ex = _clear_exception_frames(ex)
             data = (1, ex)
         else:
             meth = getattr(worker, methname)
@@ -53,7 +53,7 @@ async def run_worker(cls_name, cls_args, sockname):
                 res = await meth(*args)
                 data = (0, res)
             except Exception as ex:
-                ex = _filter_error(ex)
+                ex = _clear_exception_frames(ex)
                 data = (1, ex)
 
         try:
@@ -86,15 +86,13 @@ def main():
         exit(0)
 
 
-def _filter_error(er):
-    tb = ''.join(traceback.format_tb(er.__traceback__))
-    er.__text_traceback__ = tb
-    er.__traceback__ = None
+def _clear_exception_frames(er):
+    traceback.clear_frames(er.__traceback__)
 
     if er.__cause__ is not None:
-        er.__cause__ = _filter_error(er.__cause__)
+        er.__cause__ = _clear_exception_frames(er.__cause__)
     if er.__context__ is not None:
-        er.__context__ = _filter_error(er.__context__)
+        er.__context__ = _clear_exception_frames(er.__context__)
 
     return er
 

@@ -38,15 +38,19 @@ cdef class EdgeConnection:
     cdef:
         EdgeConnectionStatus _con_status
         EdgeProtoState _state
+        bint _awaiting
         bint _parsing
         bint _reading_messages
-        readonly str _dbname
-        readonly str _user
         str _id
-        dict _queries
         object _transport
-        CoreServer _server
+        object executor
+        object loop
+        readonly object dbview
         ReadBuffer buffer
+
+        object _awaiting_task
+
+    cdef _await(self, coro, success, error)
 
     cdef _recode_args(self, bytes bind_args)
 

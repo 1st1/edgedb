@@ -19,7 +19,6 @@
 
 import asyncio
 import collections
-import typing
 
 from . import taskgroup
 from . import coreserver as core
@@ -320,7 +319,6 @@ class BasePool:
 class PGConnectionHolder(BaseConnectionHolder):
 
     async def _connect(self, dbname):
-        print("CONNECT")
         loop = self._pool._loop
 
         con_fut = loop.create_future()
@@ -333,7 +331,6 @@ class PGConnectionHolder(BaseConnectionHolder):
         return pr  # XXX
 
     async def _close(self, con):
-        print("CLOSE")
         self._tr.abort()
         self._tr = None
 

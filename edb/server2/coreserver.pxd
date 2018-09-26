@@ -21,23 +21,5 @@
 
 
 include "./pgbase/pgbase.pxd"
-
 include "./edgecon/edgecon.pxd"
-
 include "./pgcon/pgcon.pxd"
-
-
-cdef class CoreServer:
-    cdef:
-        readonly object _loop
-
-    cdef edgecon_register(self, EdgeConnection con)
-    cdef edgecon_unregister(self, EdgeConnection con)
-    cdef edgecon_authorize(self, EdgeConnection con,
-                           str user, str password, str dbname)
-
-    cdef edgecon_parse(self, EdgeConnection con, str stmt_name, str query)
-    cdef edgecon_execute(self, EdgeConnection con, query,
-                         WriteBuffer bind_args)
-
-    cdef edgecon_simple_query(self, EdgeConnection con, str query)

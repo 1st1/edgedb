@@ -24,7 +24,6 @@ import urllib.parse
 
 from . import coreserver as core
 from . import executor
-from . import state
 
 
 class PGConParams(typing.NamedTuple):
@@ -47,14 +46,16 @@ class Interface:
 class BinaryInterface(Interface):
 
     def make_protocol(self):
-        return core.EdgeConnection(self.server)
+        return core.EdgeConnection(self.server._loop, self.server._executor)
 
 
-class Server(core.CoreServer):
+class Server:
 
     def __init__(self, *, loop, cluster, runstate_dir,
                  concurrency, max_backend_connections):
-        super().__init__(loop)
+
+        self._loop = loop
+
         self._serving = False
         self._interfaces = []
         self._servers = []
@@ -64,7 +65,7 @@ class Server(core.CoreServer):
         self._concurrency = concurrency
         self._max_backend_connections = max_backend_connections
 
-        self._epool = None
+        self._executor = None
         self._edgecon_id = 0
 
     def add_binary_interface(self, host, port):
@@ -80,60 +81,10 @@ class Server(core.CoreServer):
                 'cannot add new interfaces after start_serving() call')
         self._interfaces.append(iface)
 
-    async def _authorize(self, user, password, dbname, callback):
-        try:
-            await self._epool.authorize(dbname, user, password)
-        except Exception as ex:
-            callback(ex)
-        else:
-            callback(None)
-
-    def _parse_no_wait(self, con, eql):
-        db = self._dbindex.get(con._dbname)
-        query = db.lookup_query(eql)
-        if query:
-            return query
-
-    async def _parse(self, con, stmt_name, eql, callback):
-        try:
-            query = await self._epool.parse(con, eql)
-        except Exception as ex:
-            callback(None, None, ex)
-        else:
-            callback(stmt_name, query, None)
-
-    async def _execute(self, con, query, bind_args):
-        self._epool.execute(con, query, bind_args)
-
-    # async def _simple_query(self, con, script):
-
-    #     ca = self._cluster.get_connection_spec()
-    #     host = ca.get('host', '')
-    #     port = ca.get('port', '')
-    #     p = PGConParams(con.get_user(), '', con.get_dbname())
-
-    #     addr = os.path.join(host, f'.s.PGSQL.{port}')
-
-    #     con_fut = self._loop.create_future()
-
-    #     tr, pr = await self._loop.create_unix_connection(
-    #         lambda: core.PGProto(f'{host}:{port}', con_fut, p, self._loop),
-    #         addr)
-
-    #     try:
-    #         await con_fut
-
-    #         data = await pr.simple_query(script.encode(), None)
-    #         con._on_server_simple_query(data)
-    #     finally:
-    #         tr.abort()
-
     async def start(self):
         if self._serving:
             raise RuntimeError('already serving')
         self._serving = True
-
-        self._dbindex = state.DatabasesIndex()
 
         pg_con_spec = self._cluster.get_connection_spec()
         if 'host' not in pg_con_spec and 'dsn' in pg_con_spec:
@@ -146,18 +97,15 @@ class Server(core.CoreServer):
             host = pg_con_spec.get("host")
             port = pg_con_spec.get("port")
 
-        loop = asyncio.get_running_loop()
-
         pgaddr = os.path.join(host, f'.s.PGSQL.{port}')
-        self._epool = executor.ExecutorPool(
-            loop=loop,
-            server=self,
+        self._executor = executor.Executor(
+            loop=self._loop,
             concurrency=self._concurrency,
             max_backend_connections=self._max_backend_connections,
             runstate_dir=self._runstate_dir,
             pgaddr=pgaddr)
 
-        await self._epool.start()
+        await self._executor.start()
 
         for iface in self._interfaces:
             srv = await self._loop.create_server(
@@ -165,6 +113,6 @@ class Server(core.CoreServer):
             self._servers.append(srv)
 
     async def stop(self):
-        if self._epool is not None:
-            await self._epool.stop()
-            self._epool = None
+        if self._executor is not None:
+            await self._executor.stop()
+            self._executor = None
