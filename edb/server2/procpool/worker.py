@@ -29,14 +29,16 @@ import uvloop
 from . import amsg
 
 
-async def run_worker(cls_name, cls_args, sockname):
-    args = pickle.loads(base64.b64decode(cls_args))
+def load_class(cls_name):
     mod_name, _, cls_name = cls_name.rpartition('.')
     mod = importlib.import_module(mod_name)
     cls = getattr(mod, cls_name)
+    return cls
 
+
+async def worker(cls, cls_args, sockname):
     con = await amsg.worker_connect(sockname)
-    worker = cls(*args)
+    worker = cls(*cls_args)
 
     while True:
         req = await con.next_request()
@@ -44,7 +46,7 @@ async def run_worker(cls_name, cls_args, sockname):
         try:
             methname, args = pickle.loads(req)
         except Exception as ex:
-            ex = _clear_exception_frames(ex)
+            ex = clear_exception_frames(ex)
             data = (1, ex)
         else:
             meth = getattr(worker, methname)
@@ -53,7 +55,7 @@ async def run_worker(cls_name, cls_args, sockname):
                 res = await meth(*args)
                 data = (0, res)
             except Exception as ex:
-                ex = _clear_exception_frames(ex)
+                ex = clear_exception_frames(ex)
                 data = (1, ex)
 
         try:
@@ -71,6 +73,32 @@ async def run_worker(cls_name, cls_args, sockname):
         await con.reply(pickled)
 
 
+def run_worker(cls, cls_args, sockname):
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    asyncio.run(worker(cls, cls_args, sockname))
+
+
+def clear_exception_frames(er):
+
+    def _clear_exception_frames(er, visited):
+        if er in visited:
+            return
+        visited.add(er)
+
+        traceback.clear_frames(er.__traceback__)
+
+        if er.__cause__ is not None:
+            er.__cause__ = _clear_exception_frames(er.__cause__, visited)
+        if er.__context__ is not None:
+            er.__context__ = _clear_exception_frames(er.__context__, visited)
+
+        return er
+
+    visited = set()
+    _clear_exception_frames(er, visited)
+    return er
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--cls-name')
@@ -78,23 +106,13 @@ def main():
     parser.add_argument('--sockname')
     args = parser.parse_args()
 
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    cls = load_class(args.cls_name)
+    cls_args = pickle.loads(base64.b64decode(args.cls_args))
 
     try:
-        asyncio.run(run_worker(args.cls_name, args.cls_args, args.sockname))
+        run_worker(cls, cls_args, args.sockname)
     except amsg.PoolClosedError:
         exit(0)
-
-
-def _clear_exception_frames(er):
-    traceback.clear_frames(er.__traceback__)
-
-    if er.__cause__ is not None:
-        er.__cause__ = _clear_exception_frames(er.__cause__)
-    if er.__context__ is not None:
-        er.__context__ = _clear_exception_frames(er.__context__)
-
-    return er
 
 
 if __name__ == '__main__':

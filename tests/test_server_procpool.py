@@ -26,6 +26,7 @@ import uvloop
 
 from edb.server import _testbase as tb
 from edb.server2 import procpool
+from edb.server2 import taskgroup
 
 
 class MyExc(Exception):
@@ -84,7 +85,8 @@ class TestProcPool(tb.TestCase):
 
     async def test_procpool_1(self):
         pool = await procpool.create_pool(
-            capacity=1,
+            max_capacity=1,
+            min_capacity=1,
             runstate_dir=self.runstate_dir,
             worker_cls=Worker,
             worker_args=([123],),
@@ -104,7 +106,8 @@ class TestProcPool(tb.TestCase):
 
     async def test_procpool_2(self):
         pool = await procpool.create_pool(
-            capacity=5,
+            max_capacity=5,
+            min_capacity=5,
             runstate_dir=self.runstate_dir,
             worker_cls=Worker,
             worker_args=([123],),
@@ -129,7 +132,8 @@ class TestProcPool(tb.TestCase):
 
     async def test_procpool_3(self):
         pool = await procpool.create_pool(
-            capacity=5,
+            max_capacity=5,
+            min_capacity=5,
             runstate_dir=self.runstate_dir,
             worker_cls=Worker,
             worker_args=([123],),
@@ -144,7 +148,8 @@ class TestProcPool(tb.TestCase):
 
     async def test_procpool_4(self):
         pool = await procpool.create_pool(
-            capacity=1,
+            max_capacity=1,
+            min_capacity=1,
             runstate_dir=self.runstate_dir,
             worker_cls=Worker,
             worker_args=([123],),
@@ -166,7 +171,8 @@ class TestProcPool(tb.TestCase):
 
     async def test_procpool_5(self):
         pool = await procpool.create_pool(
-            capacity=1,
+            max_capacity=1,
+            min_capacity=1,
             runstate_dir=self.runstate_dir,
             worker_cls=Worker,
             worker_args=([123],),
@@ -193,7 +199,8 @@ class TestProcPool(tb.TestCase):
 
     async def test_procpool_6(self):
         pool = await procpool.create_pool(
-            capacity=1,
+            max_capacity=1,
+            min_capacity=1,
             runstate_dir=self.runstate_dir,
             worker_cls=Worker,
             worker_args=([123],),
@@ -210,7 +217,8 @@ class TestProcPool(tb.TestCase):
 
     async def test_procpool_7(self):
         pool = await procpool.create_pool(
-            capacity=1,
+            max_capacity=1,
+            min_capacity=1,
             runstate_dir=self.runstate_dir,
             worker_cls=Worker,
             worker_args=([123],),
@@ -227,13 +235,14 @@ class TestProcPool(tb.TestCase):
 
     async def test_procpool_8(self):
         pool = await procpool.create_pool(
-            capacity=1,
+            max_capacity=1,
+            min_capacity=1,
             runstate_dir=self.runstate_dir,
             worker_cls=Worker,
             worker_args=([123],),
             name='test_procpool_8')
 
-        worker = pool._workers[0]
+        worker = next(iter(pool._workers))
         pid = worker._proc.pid
 
         try:
@@ -250,3 +259,66 @@ class TestProcPool(tb.TestCase):
 
         finally:
             await pool.stop()
+
+    async def test_procpool_9(self):
+        pool = await procpool.create_pool(
+            max_capacity=10,
+            min_capacity=1,
+            gc_interval=0.01,
+            runstate_dir=self.runstate_dir,
+            worker_cls=Worker,
+            worker_args=([123],),
+            name='test_procpool_9')
+
+        try:
+            async with taskgroup.TaskGroup() as g:
+                for _ in range(100):
+                    g.create_task(pool.call('test1', 0.1))
+
+            await asyncio.sleep(1)
+            await pool.call('test1', 0.1)
+
+        finally:
+            await pool.stop()
+
+    async def test_procpool_10(self):
+        pool = await procpool.create_pool(
+            max_capacity=10,
+            min_capacity=2,
+            gc_interval=0.01,
+            runstate_dir=self.runstate_dir,
+            worker_cls=Worker,
+            worker_args=([123],),
+            name='test_procpool_10')
+
+        try:
+            async with taskgroup.TaskGroup() as g:
+                for _ in range(100):
+                    g.create_task(pool.call('test1', 0.1))
+
+            await asyncio.sleep(0.5)
+
+            self.assertEqual(pool._stats_spawned, 10)
+            self.assertEqual(pool._stats_killed, 8)
+
+            w1 = await pool.acquire()
+            w2 = await pool.acquire()
+            w3 = await pool.acquire()
+
+            await asyncio.sleep(0.5)
+
+            self.assertEqual(pool._stats_spawned, 11)
+            self.assertEqual(pool._stats_killed, 8)
+
+            await w1.call('test1', 0.1)
+            await w2.call('test1', 0.1)
+            await w3.call('test1', 0.1)
+
+            self.assertEqual(pool._stats_spawned, 11)
+            self.assertEqual(pool._stats_killed, 8)
+
+        finally:
+            await pool.stop()
+
+        self.assertEqual(pool._stats_spawned, 11)
+        self.assertEqual(pool._stats_killed, 11)
