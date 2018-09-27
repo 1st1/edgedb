@@ -19,9 +19,24 @@
 
 import asyncio
 import random
+import time
 
 from edb.server2 import prisem
 from edb.server import _testbase as tb
+
+
+class RegularSemaphore:
+
+    def __init__(self, *, loop, concurrency, avg_history_size):
+        self._loop = loop
+        self._sem = asyncio.BoundedSemaphore(concurrency, loop=loop)
+
+    def log_time(self, time):
+        pass
+
+    async def acquire(self, time):
+        await self._sem.acquire()
+        return self._sem
 
 
 class TestPrioritySemaphore(tb.TestCase):
@@ -82,13 +97,18 @@ class TestPrioritySemaphore(tb.TestCase):
             r3.release()
 
     async def test_server_prisem_3(self):
+        TOTAL_TIME = 0
+
         ps = prisem.PrioritySemaphore(
             loop=asyncio.get_running_loop(),
-            concurrency=6,
+            concurrency=3,
             avg_history_size=100)
 
         async def query(idx, order, high_time):
+            nonlocal TOTAL_TIME
+
             delay = random.triangular(0, high_time)
+            TOTAL_TIME += delay
 
             r = await ps.acquire(delay)
             order.append(idx)
@@ -136,17 +156,21 @@ class TestPrioritySemaphore(tb.TestCase):
                 self.assertEqual(slow_run_order, expected_slow_run_order)
                 self.assertEqual(new_run_order, expected_new_run_order)
 
+        STARTED = time.monotonic()
+
+        print('==========1')
         # Set average to 0.00001:
         for _ in range(100):
-            ps.log_time(0.00001)
+            ps.log_time(0.001)
         await run_batch(
             fast_time=0.001,
             fast_tasks=100,
-            slow_time=0.1,
-            slow_tasks=10,
-            new_tasks=50,
-            check_run_order=True)
+            slow_time=0.01,
+            slow_tasks=100,
+            new_tasks=5,
+            check_run_order=False)
 
+        print('==========2')
         await run_batch(
             fast_time=0.001,
             fast_tasks=100,
@@ -154,6 +178,7 @@ class TestPrioritySemaphore(tb.TestCase):
             slow_tasks=100,
             new_tasks=10)
 
+        print('==========3')
         # Set average to 0.001:
         for _ in range(100):
             ps.log_time(0.001)
@@ -165,6 +190,7 @@ class TestPrioritySemaphore(tb.TestCase):
             slow_tasks=100,
             new_tasks=10)
 
+        print('==========4')
         # Set average to 0.1:
         for _ in range(100):
             ps.log_time(0.1)
@@ -174,9 +200,13 @@ class TestPrioritySemaphore(tb.TestCase):
             fast_tasks=100,
             new_tasks=100)
 
+        print('==========5')
         await run_batch(
             fast_time=0.01,
             fast_tasks=1000,
             slow_time=0.1,
-            slow_tasks=500,
+            slow_tasks=1000,
             new_tasks=100)
+
+        print('print absolute time', TOTAL_TIME)
+        print('actual time', time.monotonic() - STARTED)

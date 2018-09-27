@@ -33,22 +33,17 @@ class PrioritySemaphore:
 
         self._concurrency = concurrency
 
-        self._slow_num = max(concurrency // 2, 1)
-        self._new_num = max(concurrency // 4, 1)
-        self._fast_num = max(concurrency - self._slow_num - self._new_num,
-                             self._new_num)
+        slow_num = max(concurrency // 2, 1)
+        new_num = max(concurrency // 4, 1)
+        fast_num = max(concurrency - slow_num - new_num, new_num)
 
-        self._slow_bound_num = self._slow_num
-        self._fast_bound_num = self._fast_num
-        self._new_bound_num = self._new_num
+        self._slow_bound_num = slow_num
+        self._fast_bound_num = fast_num
+        self._new_bound_num = new_num
 
-        self._slow_waiters = collections.deque()
-        self._fast_waiters = collections.deque()
-        self._new_waiters = collections.deque()
-
-        self._release_tok_slow = _SlowReleaseToken(self)
-        self._release_tok_fast = _FastReleaseToken(self)
-        self._release_tok_new = _NewReleaseToken(self)
+        self._slow_deque = _SemDeque(slow_num, _SlowReleaseToken(self))
+        self._fast_deque = _SemDeque(fast_num, _FastReleaseToken(self))
+        self._new_deque = _SemDeque(new_num, _NewReleaseToken(self))
 
         self._avg = avg.RollingAverage(avg_history_size)
 
@@ -56,23 +51,25 @@ class PrioritySemaphore:
         self._avg.add(delta)
 
     async def acquire(self, avg):
-        if self._new_num < 0 or self._slow_num < 0 or self._fast_num < 0:
+        if (self._new_deque.value < 0 or
+                self._slow_deque.value < 0 or
+                self._fast_deque.value < 0):
             raise RuntimeError('negative acquire counters')  # pragma: no cover
 
         if avg < 1e-10:
             # New query.
 
-            if self._new_num > 0 and not self._new_waiters:
-                self._new_num -= 1
-                return self._release_tok_new
+            if self._new_deque.value > 0 and not self._new_deque.waiters:
+                self._new_deque.value -= 1
+                return self._new_deque.release_token
 
-            if self._slow_num > 0 and not self._slow_waiters:
-                self._slow_num -= 1
-                return self._release_tok_slow
+            if self._slow_deque.value > 0 and not self._slow_deque.waiters:
+                self._slow_deque.value -= 1
+                return self._slow_deque.release_token
 
-            queue = self._new_waiters
+            deque = self._new_deque
 
-        elif avg > self._avg.avg * 1.4:
+        elif avg > self._avg.avg * 3:
             # Slow query.
 
             # We only classify payloads as "slow" if their avg
@@ -82,64 +79,53 @@ class PrioritySemaphore:
             # are busy processing them.  In this case, the avg will slowly
             # grow, making all queries being classified as "slow".
 
-            if self._slow_num > 0 and not self._slow_waiters:
-                self._slow_num -= 1
-                return self._release_tok_slow
+            if self._slow_deque.value > 0 and not self._slow_deque.waiters:
+                self._slow_deque.value -= 1
+                return self._slow_deque.release_token
 
-            queue = self._slow_waiters
+            deque = self._slow_deque
 
         else:
             # Fast query.
 
-            if self._fast_num > 0 and not self._fast_waiters:
-                self._fast_num -= 1
-                return self._release_tok_fast
+            if self._fast_deque.value > 0 and not self._fast_deque.waiters:
+                self._fast_deque.value -= 1
+                return self._fast_deque.release_token
 
-            if self._slow_num > 0 and not self._slow_waiters:
-                self._slow_num -= 1
-                return self._release_tok_slow
+            if self._slow_deque.value > 0 and not self._slow_deque.waiters:
+                self._slow_deque.value -= 1
+                return self._slow_deque.release_token
 
-            if self._new_num > 0 and not self._new_waiters:
-                self._new_num -= 1
-                return self._release_tok_new
+            if self._new_deque.value > 0 and not self._new_deque.waiters:
+                self._new_deque.value -= 1
+                return self._new_deque.release_token
 
-            queue = self._fast_waiters
+            deque = self._fast_deque
 
         self._id_cnt += 1
         waiter_id = self._id_cnt
         waiter = self._loop.create_future()
-        queue.append((waiter_id, waiter))
+        deque.waiters.append((waiter_id, waiter))
 
         try:
             await waiter
         except asyncio.CancelledError:
-            if not waiter.cancelled():
-                # race between the Task cancellation and a successful acquire?
+            waiter.cancel()
+            if not waiter.cancelled() and waiter.result():
+                # Race between a Task cancellation and a successful acquire.
+                deque.value += 1
                 self._try_wakeup_next()
             raise
 
-        try:
-            if queue is self._fast_waiters:
-                self._fast_num -= 1
-                return self._release_tok_fast
+        print(deque.release_token._kind[0], end='', flush=True)
+        return deque.release_token
 
-            elif queue is self._new_waiters:
-                self._new_num -= 1
-                return self._release_tok_new
-
-            else:
-                self._slow_num -= 1
-                return self._release_tok_slow
-        finally:
-            # See if it's possible to wake up more waiters.
-            self._try_wakeup_next()
-
-    def _pick_queue(self, q1, q2, q3=None):
+    def _pick_deque(self, q1, q2, q3=None):
         # Return the queue (one of q1, q2, q3) which has
         # the earliest item at the head.
 
         if q1 and q2:
-            if q1[0][0] > q2[0][0]:
+            if q1.waiters[0][0] > q2.waiters[0][0]:
                 result = q2
             else:
                 result = q1
@@ -147,48 +133,57 @@ class PrioritySemaphore:
             result = q1 or q2 or None
 
         if q3 and result:
-            return self._pick_queue(result, q3)
+            return self._pick_deque(result, q3)
 
         return q3 or result or None
 
     def _try_wakeup_next(self):
-        queue = None
+        # self._loop.call_soon(self.__try_wakeup_next)
+        self.__try_wakeup_next()
 
-        if self._fast_num:
-            queue = self._fast_waiters
+    def __try_wakeup_next(self):
+        i = 0
+        while True:
+            i += 1
+            queue = None
 
-        if not queue and self._new_num:
-            queue = self._pick_queue(
-                self._fast_waiters, self._new_waiters)
+            if self._fast_deque.value > 0:
+                queue = self._fast_deque
 
-        if not queue and self._slow_num:
-            queue = self._pick_queue(
-                self._fast_waiters, self._new_waiters, self._slow_waiters)
+            if not queue and self._new_deque.value > 0:
+                queue = self._pick_deque(
+                    self._fast_deque, self._new_deque)
 
-        if not queue:
-            # All queues are empty or we are out of capacity.
-            return
+            if not queue and self._slow_deque.value > 0:
+                queue = self._pick_deque(
+                    self._fast_deque, self._new_deque, self._slow_deque)
 
-        _, waiter = queue.popleft()
-        if not waiter.done():
-            waiter.set_result(True)  # async
+            if not queue:
+                # print(f'={i}=', end='', flush=True)
+                # All queues are empty or we are out of capacity.
+                return
+
+            _, waiter = queue.waiters.popleft()
+            if not waiter.done():
+                waiter.set_result(True)  # async
+                queue.value -= 1
 
     def _release_new(self):
-        if self._new_num >= self._new_bound_num:
+        if self._new_deque.value >= self._new_bound_num:
             raise ValueError('PrioritySemaphore was released too many times')
-        self._new_num += 1
+        self._new_deque.value += 1
         self._try_wakeup_next()
 
     def _release_slow(self):
-        if self._slow_num >= self._slow_bound_num:
+        if self._slow_deque.value >= self._slow_bound_num:
             raise ValueError('PrioritySemaphore was released too many times')
-        self._slow_num += 1
+        self._slow_deque.value += 1
         self._try_wakeup_next()
 
     def _release_fast(self):
-        if self._fast_num >= self._fast_bound_num:
+        if self._fast_deque.value >= self._fast_bound_num:
             raise ValueError('PrioritySemaphore was released too many times')
-        self._fast_num += 1
+        self._fast_deque.value += 1
         self._try_wakeup_next()
 
 
@@ -196,9 +191,13 @@ class _SemDeque:
 
     _counter: int
 
-    def __init__(self, value: int):
-        self.sem_value = value
+    def __init__(self, value: int, release_token):
+        self.value = value
         self.waiters = collections.deque()
+        self.release_token = release_token
+
+    def __bool__(self):
+        return bool(self.waiters)
 
 
 class _NewReleaseToken:
