@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-
+include "../pgbase/pgbase.pxd"
 include "./corepgcon.pxd"
 
 

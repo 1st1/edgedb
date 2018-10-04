@@ -15,11 +15,3 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
-
-# cython: language_level=3
-
-
-include "./pgbase/pgbase.pyx"
-include "./edgecon/edgecon.pyx"
-include "./pgcon/pgcon.pyx"

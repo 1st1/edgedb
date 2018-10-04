@@ -23,7 +23,6 @@ import typing
 import urllib.parse
 
 from . import coreserver as core
-from . import executor
 
 
 class PGConParams(typing.NamedTuple):
@@ -98,12 +97,6 @@ class Server:
             port = pg_con_spec.get("port")
 
         pgaddr = os.path.join(host, f'.s.PGSQL.{port}')
-        self._executor = executor.Executor(
-            loop=self._loop,
-            concurrency=self._concurrency,
-            max_backend_connections=self._max_backend_connections,
-            runstate_dir=self._runstate_dir,
-            pgaddr=pgaddr)
 
         await self._executor.start()
 

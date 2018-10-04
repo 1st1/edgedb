@@ -16,9 +16,9 @@
 # limitations under the License.
 #
 
-
 import asyncio
 
+include "../pgbase/pgbase.pyx"
 include "./corepgcon.pyx"
 
 

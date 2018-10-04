@@ -287,7 +287,10 @@ class build_ext(distutils_build_ext.build_ext):
 
         from Cython.Build import cythonize
 
-        directives = {}
+        directives = {
+            'language_level': '3'
+        }
+
         if self.cython_directives:
             for directive in self.cython_directives.split(','):
                 k, _, v = directive.partition('=')
@@ -331,14 +334,14 @@ setup(
     },
     ext_modules=[
         distutils_extension.Extension(
-            "edb.server2.coreserver",
-            ["edb/server2/coreserver.pyx"],
+            "edb.server2.edgecon.edgecon",
+            ["edb/server2/edgecon/edgecon.pyx"],
             extra_compile_args=EXT_CFLAGS,
             extra_link_args=EXT_LDFLAGS),
 
         distutils_extension.Extension(
-            "edb.server2.avg",
-            ["edb/server2/avg.pyx"],
+            "edb.server2.pgcon.pgcon",
+            ["edb/server2/pgcon/pgcon.pyx"],
             extra_compile_args=EXT_CFLAGS,
             extra_link_args=EXT_LDFLAGS),
     ],

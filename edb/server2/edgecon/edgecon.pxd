@@ -17,6 +17,9 @@
 #
 
 
+include "../pgbase/pgbase.pxd"
+
+
 cdef enum EdgeConnectionStatus:
     EDGECON_NEW = 0
     EDGECON_STARTED = 1
