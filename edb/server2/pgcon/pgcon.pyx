@@ -16,9 +16,20 @@
 # limitations under the License.
 #
 
+cimport cython
+cimport cpython
+
+from libc.stdint cimport int8_t, uint8_t, int16_t, uint16_t, \
+                         int32_t, uint32_t, int64_t, uint64_t, \
+                         UINT32_MAX
+
+from edgedb.pgproto.pgproto cimport (
+    WriteBuffer,
+    ReadBuffer,
+)
+
 import asyncio
 
-include "../pgbase/pgbase.pyx"
 include "./corepgcon.pyx"
 
 

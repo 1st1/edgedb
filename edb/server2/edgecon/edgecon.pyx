@@ -16,7 +16,25 @@
 # limitations under the License.
 #
 
-include "../pgbase/pgbase.pyx"
+cimport cython
+cimport cpython
+
+from libc.stdint cimport int8_t, uint8_t, int16_t, uint16_t, \
+                         int32_t, uint32_t, int64_t, uint64_t, \
+                         UINT32_MAX
+
+from edgedb.pgproto cimport hton
+from edgedb.pgproto.pgproto cimport (
+    WriteBuffer,
+    ReadBuffer,
+
+    FRBuffer,
+    frb_init,
+    frb_read,
+    frb_read_all,
+    frb_get_len,
+)
+
 
 import asyncio
 
@@ -26,7 +44,6 @@ cdef class EdgeConnection:
     def __init__(self, loop, executor):
         self._con_status = EDGECON_NEW
         self._state = EDGEPROTO_AUTH
-        self._server = server
         self._id = self._server.new_edgecon_id()
 
         self.loop = loop
@@ -82,7 +99,7 @@ cdef class EdgeConnection:
             if not self._handle__startup():
                 return
 
-        while self._parsing and self.buffer.has_message() == 1:
+        while self._parsing and self.buffer.take_message() == 1:
             self._pause_parsing()
 
             mtype = self.buffer.get_message_type()
@@ -207,7 +224,7 @@ cdef class EdgeConnection:
                     f'a prepared statement named {stmt_name!r} already exists')
 
         self._await(
-            self.executor.parse(con, stmt_name, eql),
+            self.executor.parse(self, stmt_name, eql),
             self._on__parse_success,
             self._on__failure)
 
@@ -260,27 +277,29 @@ cdef class EdgeConnection:
 
     cdef _recode_args(self, bytes bind_args):
         cdef:
-            FastReadBuffer in_buf = FastReadBuffer.new()
+            FRBuffer in_buf
             WriteBuffer out_buf = WriteBuffer.new()
             int32_t argsnum
             ssize_t in_len
 
         assert cpython.PyBytes_CheckExact(bind_args)
-        in_buf.buf = cpython.PyBytes_AS_STRING(bind_args)
-        in_buf.len = cpython.Py_SIZE(bind_args)
+        frb_init(
+            &in_buf,
+            cpython.PyBytes_AS_STRING(bind_args),
+            cpython.Py_SIZE(bind_args))
 
         # all parameters are in binary
         out_buf.write_int32(0x00010001)
 
-        in_buf.read(4)  # ignore buffer length
+        frb_read(&in_buf, 4)  # ignore buffer length
 
         # number of elements in the tuple
-        argsnum = hton.unpack_int32(in_buf.read(4))
+        argsnum = hton.unpack_int32(frb_read(&in_buf, 4))
 
         out_buf.write_int16(<int16_t>argsnum)
 
-        in_len = in_buf.len
-        out_buf.write_cstr(in_buf.read_all(), in_len)
+        in_len = frb_get_len(&in_buf)
+        out_buf.write_cstr(frb_read_all(&in_buf), in_len)
 
         # All columns are in binary format
         out_buf.write_int32(0x00010001)
@@ -288,7 +307,7 @@ cdef class EdgeConnection:
 
     cdef _handle__execute(self):
         stmt_name = self.buffer.read_utf8()
-        bind_args = self.buffer.consume_message().as_bytes()
+        bind_args = self.buffer.consume_message()
         query = self._queries[stmt_name]
         bind_args = self._recode_args(bind_args)
         self._server.edgecon_execute(self, query, bind_args)

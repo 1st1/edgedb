@@ -22,7 +22,8 @@ import os
 import typing
 import urllib.parse
 
-from . import coreserver as core
+
+from . import edgecon
 
 
 class PGConParams(typing.NamedTuple):
@@ -45,7 +46,7 @@ class Interface:
 class BinaryInterface(Interface):
 
     def make_protocol(self):
-        return core.EdgeConnection(self.server._loop, self.server._executor)
+        return edgecon.EdgeConnection(self.server._loop, self.server._executor)
 
 
 class Server:

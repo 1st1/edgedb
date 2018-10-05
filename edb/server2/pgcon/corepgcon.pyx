@@ -51,7 +51,7 @@ cdef class CorePGProto:
             char mtype
             PGProtocolState state
 
-        while self.buffer.has_message() == 1:
+        while self.buffer.take_message() == 1:
             mtype = self.buffer.get_message_type()
             state = self.state
 
@@ -83,7 +83,7 @@ cdef class CorePGProto:
                         self._parse_msg_ready_for_query()
                         self._push_result()
                     else:
-                        self.buffer.consume_message()
+                        self.buffer.discard_message()
 
                 elif state == PGPROTO_ERROR_CONSUME:
                     # Error in protocol (on asyncpg side);
@@ -99,7 +99,7 @@ cdef class CorePGProto:
                         self._push_result()
 
                     else:
-                        self.buffer.consume_message()
+                        self.buffer.discard_message()
 
                 else:
                     raise RuntimeError(
@@ -153,7 +153,7 @@ cdef class CorePGProto:
     cdef _process__execute_anonymous(self, char mtype):
         if mtype == b'1':
             # ParseComplete
-            self.buffer.consume_message()
+            self.buffer.discard_message()
 
         elif mtype == b'E':
             # ErrorResponse
@@ -166,13 +166,13 @@ cdef class CorePGProto:
 
         elif mtype == b'n':
             # NoData
-            self.buffer.consume_message()
+            self.buffer.discard_message()
 
         elif mtype == b'D':
             # DataRow
             if self.result_data is None:
                 self.result_data = WriteBuffer.new()
-            self.buffer.consume_full_messages(self.result_data, b'D')
+            self.buffer.redirect_messages(self.result_data, b'D')
 
             if self.result_data.len() > 20000:
                 self.edgecon._send_data(self.result_data)
@@ -184,7 +184,7 @@ cdef class CorePGProto:
 
         elif mtype == b's':
             # PortalSuspended
-            self.buffer.consume_message()
+            self.buffer.discard_message()
 
         elif mtype == b'C':
             # CommandComplete
@@ -202,11 +202,11 @@ cdef class CorePGProto:
 
         elif mtype == b'2':
             # BindComplete
-            self.buffer.consume_message()
+            self.buffer.discard_message()
 
         elif mtype == b'I':
             # EmptyQueryResponse
-            self.buffer.consume_message()
+            self.buffer.discard_message()
 
     cdef _parse_msg_command_complete(self):
         cdef:
@@ -264,7 +264,7 @@ cdef class CorePGProto:
                 'unsupported authentication method requested by the '
                 'server: {}'.format(status))
 
-        self.buffer.consume_message()
+        self.buffer.discard_message()
 
     cdef _parse_msg_ready_for_query(self):
         cdef char status = self.buffer.read_byte()

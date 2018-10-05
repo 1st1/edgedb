@@ -334,16 +334,24 @@ setup(
     },
     ext_modules=[
         distutils_extension.Extension(
+            "edb.server2.pgproto.pgproto",
+            ["edb/server2/pgproto/pgproto.pyx"],
+            extra_compile_args=EXT_CFLAGS,
+            extra_link_args=EXT_LDFLAGS),
+
+        distutils_extension.Extension(
             "edb.server2.edgecon.edgecon",
             ["edb/server2/edgecon/edgecon.pyx"],
             extra_compile_args=EXT_CFLAGS,
-            extra_link_args=EXT_LDFLAGS),
+            extra_link_args=EXT_LDFLAGS,
+            include_path=["edb/server2/pgproto/"]),
 
         distutils_extension.Extension(
             "edb.server2.pgcon.pgcon",
             ["edb/server2/pgcon/pgcon.pyx"],
             extra_compile_args=EXT_CFLAGS,
-            extra_link_args=EXT_LDFLAGS),
+            extra_link_args=EXT_LDFLAGS,
+            include_path=["edb/server2/pgproto/"]),
     ],
     install_requires=RUNTIME_DEPS,
     extras_require=EXTRA_DEPS,
