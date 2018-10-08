@@ -15,3 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
+
+from .pgcon import PGProto
+
+
+__all__ = ('PGProto',)

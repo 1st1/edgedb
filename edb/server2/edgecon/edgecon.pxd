@@ -23,12 +23,12 @@ cimport cpython
 from libc.stdint cimport int8_t, uint8_t, int16_t, uint16_t, \
                          int32_t, uint32_t, int64_t, uint64_t
 
-from edgedb.pgproto.pgproto cimport (
+from edb.server2.pgproto.pgproto cimport (
     WriteBuffer,
     ReadBuffer,
 )
 
-from edgedb.pgproto.debug cimport PG_DEBUG
+from edb.server2.pgproto.debug cimport PG_DEBUG
 
 
 cdef enum EdgeConnectionStatus:
@@ -57,9 +57,14 @@ cdef class EdgeConnection:
         bint _reading_messages
         str _id
         object _transport
-        object executor
+
+        object server
+        object pgpool
+        object cpool
+        object dbindex
         object loop
         readonly object dbview
+
         ReadBuffer buffer
 
         object _awaiting_task

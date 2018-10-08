@@ -18,3 +18,6 @@
 
 
 from .edgecon import EdgeConnection
+
+
+__all__ = ('EdgeConnection',)

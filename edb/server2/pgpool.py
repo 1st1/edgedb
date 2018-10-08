@@ -21,7 +21,7 @@ import asyncio
 import collections
 
 from . import taskgroup
-from . import coreserver as core
+from . import pgcon
 
 
 class MappedDeque:
@@ -324,7 +324,7 @@ class PGConnectionHolder(BaseConnectionHolder):
         con_fut = loop.create_future()
 
         self._tr, pr = await loop.create_unix_connection(
-            lambda: core.PGProto(f'', con_fut, dbname, loop),
+            lambda: pgcon.PGProto(f'', con_fut, dbname, loop),
             self._pool._pgaddr)
 
         await con_fut

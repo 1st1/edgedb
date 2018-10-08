@@ -24,7 +24,7 @@ from libc.stdint cimport int8_t, uint8_t, int16_t, uint16_t, \
                          UINT32_MAX
 
 from edgedb.pgproto cimport hton
-from edgedb.pgproto.pgproto cimport (
+from edb.server2.pgproto.pgproto cimport (
     WriteBuffer,
     ReadBuffer,
 
@@ -41,13 +41,16 @@ import asyncio
 
 cdef class EdgeConnection:
 
-    def __init__(self, loop, executor):
+    def __init__(self, server, loop, cpool, pgpool, dbindex):
         self._con_status = EDGECON_NEW
         self._state = EDGEPROTO_AUTH
-        self._id = self._server.new_edgecon_id()
+        self._id = server.new_edgecon_id()
 
+        self.server = server
         self.loop = loop
-        self.executor = executor
+        self.cpool = cpool
+        self.pgpool = pgpool
+        self.dbindex = dbindex
         self.dbview = None
 
         self._transport = None
@@ -251,7 +254,7 @@ cdef class EdgeConnection:
 
     cdef _handle__simple_query(self):
         query = self.buffer.read_utf8()
-        self._server.edgecon_simple_query(self, query)
+        self.server.edgecon_simple_query(self, query)
 
     cdef _handle__describe(self):
         cdef:
@@ -310,7 +313,7 @@ cdef class EdgeConnection:
         bind_args = self.buffer.consume_message()
         query = self._queries[stmt_name]
         bind_args = self._recode_args(bind_args)
-        self._server.edgecon_execute(self, query, bind_args)
+        self.server.edgecon_execute(self, query, bind_args)
 
     cdef _handle__startup(self):
         cdef:
@@ -318,7 +321,7 @@ cdef class EdgeConnection:
             int16_t lo
             WriteBuffer buf
 
-        if self.buffer.length() < 4:
+        if self.buffer.len() < 4:
             return False
 
         hi = self.buffer.read_int16()
@@ -346,10 +349,10 @@ cdef class EdgeConnection:
         if self._con_status != EDGECON_NEW:
             raise RuntimeError('connection_made: invalid connection status')
         self._transport = transport
-        self._server.edgecon_register(self)
+        # self.server.edgecon_register(self)
 
     def connection_lost(self, exc):
-        self._server.edgecon_unregister(self)
+        # self.server.edgecon_unregister(self)
         pass
 
     def pause_writing(self):

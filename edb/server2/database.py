@@ -66,9 +66,6 @@ class Database:
 
 class ConnectionDatabaseView:
 
-    # prepared query name -> Query
-    _prep_queries: typing.Dict[str, query.Query]
-    _prep_query_to_compiled: typing.Dict[query.Query, query.CompiledQuery]
     _anon_query_to_compiled: typing.Mapping[query.Query, query.CompiledQuery]
 
     def __init__(self, db, *, user):
@@ -79,19 +76,12 @@ class ConnectionDatabaseView:
 
         self._user = user
 
-        self._prep_queries = {}
-        self._prep_query_to_compiled = {}
-
         # Whenever we are in a transaction that had executed a
         # DDL command, we use this cache for compiled queries.
         self._anon_query_to_compiled = lru.LRUMapping(
             defines._MAX_QUERIES_CACHE)
 
     def _invalidate_local_caches(self):
-        self._prep_query_to_compiled.clear()
-        self._invalidate_local_anon_queries_cache()
-
-    def _invalidate_local_anon_queries_cache(self):
         self._anon_query_to_compiled.clear()
 
     @property
@@ -105,32 +95,6 @@ class ConnectionDatabaseView:
     @property
     def dbver(self):
         return self._db._dbver
-
-    def create_prepared_query(self, name: str, eql: str) -> query.Query:
-        if not name:
-            raise RuntimeError('empty name for a prepared statement')
-        if name in self._prep_queries:
-            raise RuntimeError(
-                f'cannot create a prepared statement; another '
-                f'prepared statement with {name!r} name already exists')
-
-        q = query.Query(eql=eql, prepared=True)
-        self._prep_queries[name] = q
-        return q
-
-    def lookup_prepared_query(self, name: str) -> query.Query:
-        if not name:
-            raise RuntimeError('empty name for a prepared statement')
-        return self._prep_queries.get(name)
-
-    def clear_prepared_query(self, name: str):
-        if not name:
-            raise RuntimeError('empty name for a prepared statement')
-        q = self._prep_queries.pop(name, None)
-        if q is None:
-            raise RuntimeError(
-                f'cannot locate prepared statement with {name!r} name')
-        self._prep_query_to_compiled.pop(q, None)
 
     def create_anonymous_query(self, eql: str) -> query.Query:
         q = query.Query(eql=eql)
@@ -211,9 +175,9 @@ class ConnectionDatabaseView:
             raise RuntimeError('cannot rollback; not in transaction')
 
         if self._in_tx_with_ddl:
-            # We definitely no longer need our local anonymous queries
+            # We no longer need our local anonymous queries
             # cache: invalidate it.
-            self._invalidate_local_anon_queries_cache()
+            self._invalidate_local_caches()
 
         self._in_tx = False
         self._in_tx_with_ddl = False
@@ -228,16 +192,7 @@ class DatabaseIndex:
         try:
             db = self._dbs[dbname]
         except KeyError:
-            raise RuntimeError(f'no DB {dbname!r} is registered') from None
+            db = Database(dbname)
+            self._dbs[dbname] = db
 
         return db._new_view(user=user)
-
-    def is_registered(self, dbname) -> bool:
-        return dbname in self._dbs
-
-    def register(self, dbname) -> None:
-        if self.get(dbname) is not None:
-            raise RuntimeError(
-                f'db {dbname!r} is already registered')
-        db = Database(dbname)
-        self._dbs[dbname] = db

@@ -373,7 +373,8 @@ async def create_pool(*, capacity: int,
                       connection_spec: dict):
 
     return await procpool.create_pool(
-        capacity=capacity,
+        min_capacity=capacity,
+        max_capacity=capacity,
         runstate_dir=runstate_dir,
         name='edgedb-compiler',
         worker_cls=Compiler,

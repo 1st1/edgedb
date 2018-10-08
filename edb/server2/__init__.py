@@ -22,8 +22,10 @@ import os
 import typing
 import urllib.parse
 
-
+from . import compilerpool
+from . import database
 from . import edgecon
+from . import pgpool
 
 
 class PGConParams(typing.NamedTuple):
@@ -46,7 +48,12 @@ class Interface:
 class BinaryInterface(Interface):
 
     def make_protocol(self):
-        return edgecon.EdgeConnection(self.server._loop, self.server._executor)
+        return edgecon.EdgeConnection(
+            self.server,
+            self.server._loop,
+            self.server._cpool,
+            self.server._pgpool,
+            self.server._dbindex)
 
 
 class Server:
@@ -61,12 +68,16 @@ class Server:
         self._servers = []
         self._cluster = cluster
 
+        self._dbindex = database.DatabaseIndex()
+
         self._runstate_dir = runstate_dir
         self._concurrency = concurrency
         self._max_backend_connections = max_backend_connections
 
-        self._executor = None
         self._edgecon_id = 0
+
+        self._cpool = None
+        self._pgpool = None
 
     def add_binary_interface(self, host, port):
         self._add_interface(BinaryInterface(self, host, port))
@@ -99,7 +110,18 @@ class Server:
 
         pgaddr = os.path.join(host, f'.s.PGSQL.{port}')
 
-        await self._executor.start()
+        self._cpool = await compilerpool.create_pool(
+            capacity=self._concurrency + 1,
+            runstate_dir=self._runstate_dir,
+            connection_spec={
+                'host': pgaddr
+            })
+
+        self._pgpool = pgpool.PGPool(
+            loop=asyncio.get_running_loop(),
+            max_capacity=self._max_backend_connections,
+            concurrency=self._concurrency,
+            pgaddr=pgaddr)
 
         for iface in self._interfaces:
             srv = await self._loop.create_server(
@@ -107,6 +129,10 @@ class Server:
             self._servers.append(srv)
 
     async def stop(self):
-        if self._executor is not None:
-            await self._executor.stop()
-            self._executor = None
+        if self._cpool is not None:
+            await self._cpool.stop()
+            self._cpool = None
+
+        if self._pgpool is not None:
+            await self._pgpool.close()
+            self._pgpool = None
