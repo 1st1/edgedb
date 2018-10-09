@@ -23,7 +23,7 @@ import typing
 import urllib.parse
 
 from . import compilerpool
-from . import database
+from . import dbstate
 from . import edgecon
 from . import pgpool
 
@@ -68,7 +68,7 @@ class Server:
         self._servers = []
         self._cluster = cluster
 
-        self._dbindex = database.DatabaseIndex()
+        self._dbindex = dbstate.DatabaseIndex()
 
         self._runstate_dir = runstate_dir
         self._concurrency = concurrency

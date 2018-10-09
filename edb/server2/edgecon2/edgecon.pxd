@@ -67,14 +67,28 @@ cdef class EdgeConnection:
 
         ReadBuffer buffer
 
-        object pgcon
-        object comp
+        object _awaiting_task
 
-        object _msg_take_waiter
-        object _startup_msg_waiter
+    cdef _await(self, coro, success, error)
 
-        object _main_task
+    cdef _recode_args(self, bytes bind_args)
 
-        object _last_anon_compiled
-
+    cdef _read_buffer_messages(self)
     cdef _write(self, buf)
+
+    cdef _handle__startup(self)
+
+    cdef _handle__auth(self, char mtype)
+
+    cdef _handle__simple_query(self)
+
+    cdef _handle__describe(self)
+
+    cdef _handle__parse(self)
+
+    cdef _handle__sync(self)
+
+    cdef _handle__execute(self)
+
+    cdef _pause_parsing(self)
+    cdef _resume_parsing(self)

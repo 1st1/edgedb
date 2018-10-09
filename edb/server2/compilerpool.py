@@ -23,6 +23,7 @@ __all__ = 'create_pool',
 import asyncio
 import collections
 import dataclasses
+import hashlib
 import struct
 import typing
 import uuid
@@ -39,8 +40,8 @@ from edb.lang.edgeql import compiler as ql_compiler
 from edb.lang.schema import error as s_err
 from edb.lang.schema import types as s_types
 
+from . import dbstate
 from . import procpool
-from . import query
 
 
 @dataclasses.dataclass(frozen=True)
@@ -282,7 +283,8 @@ class Compiler:
         self._connect_args = connect_args
         self._databases = {}
 
-    async def _get_database(self, dbname: str, dbver: int):
+    async def _get_database(self, dbname: str,
+                            dbver: int) -> CompilerDatabaseState:
         try:
             db = self._databases[dbname]
         except KeyError:
@@ -314,7 +316,7 @@ class Compiler:
         finally:
             asyncio.create_task(con.close())
 
-    def _compile(self, db, eql):
+    def _compile(self, db: CompilerDatabaseState, eql):
         statements = edgeql.parse_block(eql)
         if len(statements) != 1:
             raise RuntimeError(
@@ -322,7 +324,7 @@ class Compiler:
         stmt = statements[0]
         return self._compile_stmt(db, stmt)
 
-    def _compile_stmt(self, db, stmt):
+    def _compile_stmt(self, db: CompilerDatabaseState, stmt):
         ir = ql_compiler.compile_ast_to_ir(
             stmt,
             schema=db.schema,
@@ -357,11 +359,17 @@ class Compiler:
         in_type_data, in_type_id = QueryResultsTypeSerializer.describe(
             db, params_type, {})
 
-        return query.CompiledQuery(
-            0,
-            out_type_data, out_type_id.bytes,
-            in_type_data, in_type_id.bytes,
-            sql_text.encode(defines.EDGEDB_ENCODING))
+        sql_bytes = sql_text.encode(defines.EDGEDB_ENCODING)
+        sql_hash = hashlib.sha1(sql_bytes).hexdigest().encode('ascii')
+
+        return dbstate.CompiledQuery(
+            dbver=db.dbver,
+            out_type_data=out_type_data,
+            out_type_id=out_type_id.bytes,
+            in_type_data=in_type_data,
+            in_type_id=in_type_id.bytes,
+            sql=sql_bytes,
+            sql_hash=sql_hash)
 
     async def compile_edgeql(self, dbname, dbver, eql):
         db = await self._get_database(dbname, dbver)

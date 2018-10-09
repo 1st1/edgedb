@@ -56,182 +56,87 @@ cdef class EdgeConnection:
         self._transport = None
         self.buffer = ReadBuffer()
 
+        self.pgcon = None
+        self.comp = None
+
         self._parsing = True
         self._reading_messages = False
 
-        self._awaiting_task = None
+        self._main_task = None
+        self._startup_msg_waiter = loop.create_future()
+        self._msg_take_waiter = None
 
-    # Awaiting on executor methods
-
-    cdef _await(self, coro, success, failure):
-        if self._awaiting_task is not None:
-            raise RuntimeError('already awaiting')
-
-        self._awaiting_task = self.loop.create_task(coro)
-        self._awaiting_task.add_done_callback(
-            lambda task: self._await_done(task, success, failure))
-
-    def _await_done(self, task, success, failure):
-        self._awaiting_task = None
-        if task.cancelled():
-            failure(asyncio.CancelledError())
-        else:
-            exc = task.exception()
-            if exc is None:
-                success(task.result())
-            else:
-                failure(exc)
-
-    cdef _pause_parsing(self):
-        self._parsing = False
-
-    cdef _resume_parsing(self):
-        self._parsing = True
-        if not self._reading_messages:
-            self._read_buffer_messages()
+        self._last_anon_compiled = None
 
     cdef _write(self, buf):
         self._transport.write(memoryview(buf))
 
-    cdef _read_buffer_messages(self):
+    async def wait_for_message(self):
+        if self.buffer.take_message():
+            return
+        self._msg_take_waiter = self.loop.create_future()
+        await self._msg_take_waiter
+
+    async def auth(self):
         cdef:
-            EdgeProtoState state
+            int16_t hi
+            int16_t lo
             char mtype
 
-        if self._con_status == EDGECON_NEW:
-            if not self._handle__startup():
-                return
+            WriteBuffer msg_buf
+            WriteBuffer buf
 
-        while self._parsing and self.buffer.take_message() == 1:
-            self._pause_parsing()
+        await self._startup_msg_waiter
 
-            mtype = self.buffer.get_message_type()
-            state = self._state
+        hi = self.buffer.read_int16()
+        lo = self.buffer.read_int16()
+        if hi != 1 or lo != 0:
+            self._transport.close()
+            raise RuntimeError('wrong proto')
 
-            try:
-                self._reading_messages = True
+        self._con_status = EDGECON_STARTED
 
-                if state == EDGEPROTO_AUTH:
-                    self._handle__auth(mtype)
-
-                elif state == EDGEPROTO_IDLE:
-                    if mtype == b'P':
-                        self._handle__parse()
-
-                    elif mtype == b'D':
-                        self._handle__describe()
-
-                    elif mtype == b'S':
-                        self._handle__sync()
-
-                    elif mtype == b'E':
-                        self._handle__execute()
-
-                    elif mtype == b'Q':
-                        self._handle__simple_query()
-
-            except Exception as ex:
-                print("EXCEPTION", type(ex), ex)
-                self._state = EDGEPROTO_CLOSED
-                self._transport.close()
-                raise
-                return
-            finally:
-                self.buffer.discard_message()
-                self._reading_messages = False
-
-    def _on_server_execute_data(self):
-        self._state = EDGEPROTO_IDLE
-        self._resume_parsing()
-
-    def _on_server_simple_query(self, data):
-        buf = WriteBuffer.new_message(b'C')  # ParseComplete
-        buf.write_bytestring(data)
-        buf.end_message()
-        self._write(buf)
-
-        msg_buf = WriteBuffer.new_message(b'Z')
-        msg_buf.write_byte(b'I')
-        msg_buf.end_message()
-        self._write(msg_buf)
-
-        self._state = EDGEPROTO_IDLE
-        self._resume_parsing()
-
-    def _on__failure(self, exc):
-        raise exc
-
-    ##### Authentication
-
-    cdef _handle__auth(self, char mtype):
+        await self.wait_for_message()
+        mtype = self.buffer.get_message_type()
         if mtype == b'0':
             user = self.buffer.read_utf8()
             password = self.buffer.read_utf8()
             database = self.buffer.read_utf8()
 
-            self._await(
-                self.executor.authorize(database, user, password),
-                self._on__auth_success,
-                self._on__failure)
+            # XXX implement auth
+            self.dbview = self.dbindex.new_view(database, user=user)
+            self.pgcon = await self.pgpool.acquire(database)
+            self.comp = await self.cpool.acquire()
 
-        self._resume_parsing()  # XXX ?
+            buf = WriteBuffer()
 
-    def _on__auth_success(self, dbview):
-        cdef:
-            WriteBuffer msg_buf
-            WriteBuffer buf
+            msg_buf = WriteBuffer.new_message(b'R')
+            msg_buf.write_int32(0)
+            msg_buf.end_message()
+            buf.write_buffer(msg_buf)
 
-        self.dbview = dbview
+            msg_buf = WriteBuffer.new_message(b'K')
+            msg_buf.write_int32(0)  # TODO: should send ID of this connection
+            msg_buf.end_message()
+            buf.write_buffer(msg_buf)
 
-        # connection OK
+            msg_buf = WriteBuffer.new_message(b'Z')
+            msg_buf.write_byte(b'I')
+            msg_buf.end_message()
+            buf.write_buffer(msg_buf)
 
-        buf = WriteBuffer()
+            self._write(buf)
 
-        msg_buf = WriteBuffer.new_message(b'R')
-        msg_buf.write_int32(0)
-        msg_buf.end_message()
-        buf.write_buffer(msg_buf)
+            self.buffer.finish_message()
 
-        msg_buf = WriteBuffer.new_message(b'K')
-        msg_buf.write_int32(0)  # TODO: should send ID of this connection
-        msg_buf.end_message()
-        buf.write_buffer(msg_buf)
-
-        msg_buf = WriteBuffer.new_message(b'Z')
-        msg_buf.write_byte(b'I')
-        msg_buf.end_message()
-        buf.write_buffer(msg_buf)
-
-        self._write(buf)
-
-        self._state = EDGEPROTO_IDLE
-        self._resume_parsing()
-
-    ##### Parse
-
-    cdef _handle__parse(self):
-        stmt_name = self.buffer.read_utf8()
-        eql = self.buffer.read_utf8()
-
-        if stmt_name == '':
-            # anonymous query; try fast path
-            compiled = self.dbview.lookup_anonymous_compiled_query(eql)
-            if compiled is not None:
-                self._on__parse_success(compiled)
-                return
         else:
-            q = self.dbview.lookup_prepared_query(stmt_name)
-            if q is not None:
-                # XXX
-                raise RuntimeError(
-                    f'a prepared statement named {stmt_name!r} already exists')
+            raise TypeError(f'---> {chr(mtype)} <---')
 
-        self._await(
-            self.executor.parse(self, stmt_name, eql),
-            self._on__parse_success,
-            self._on__failure)
+    #############
 
-    def _on__parse_success(self, compiled):
+    def parse_success(self, compiled):
+        self._last_anon_compiled = compiled
+
         buf = WriteBuffer.new_message(b'1')  # ParseComplete
         buf.write_bytestring(compiled.out_type_id)
         buf.write_bytestring(compiled.in_type_id)
@@ -240,115 +145,110 @@ cdef class EdgeConnection:
         self._write(buf)
 
         self._state = EDGEPROTO_IDLE
-        self._resume_parsing()
 
-    #####
+    async def parse(self):
+        cdef:
+            char mtype
 
-    cdef _handle__sync(self):
-        cdef WriteBuffer msg_buf
-        msg_buf = WriteBuffer.new_message(b'Z')
-        msg_buf.write_byte(b'I')
-        msg_buf.end_message()
-        self._write(msg_buf)
-        self._resume_parsing()
+        self._last_anon_compiled = None
 
-    cdef _handle__simple_query(self):
-        query = self.buffer.read_utf8()
-        self.server.edgecon_simple_query(self, query)
+        stmt_name = self.buffer.read_utf8()
+        if stmt_name:
+            raise RuntimeError('named statements are not yet supported')
 
-    cdef _handle__describe(self):
+        eql = self.buffer.read_utf8()
+
+        assert stmt_name == ''
+
+        compiled = self.dbview.lookup_compiled_query(eql)
+        if compiled is not None:
+            self.parse_success(compiled)
+            return
+
+        compiled = await self.comp.call(
+            'compile_edgeql', self.dbview.dbname, self.dbview.dbver, eql)
+
+        self.dbview.cache_compiled_query(eql, compiled)
+
+        self.parse_success(compiled)
+
+    #############
+
+    async def describe(self):
         cdef:
             char rtype
             WriteBuffer msg
 
         rtype = self.buffer.read_byte()
-        if rtype == b'S':
-            # describe statement
+        if rtype == b'T':
+            # describe "type id"
             stmt_name = self.buffer.read_utf8()
-            q = self._queries[stmt_name]
+            type_id = self.buffer.read_cstr()
 
-            msg = WriteBuffer.new_message(b'T')
-            msg.write_int16(len(q.compiled.out_type_data))
-            msg.write_bytes(q.compiled.out_type_data)
-            msg.write_int16(len(q.compiled.in_type_data))
-            msg.write_bytes(q.compiled.in_type_data)
-            msg.end_message()
-            self._write(msg)
-            self._resume_parsing()
+            if stmt_name:
+                raise RuntimeError('named statements are not yet supported')
+            else:
+                if self._last_anon_compiled is None:
+                    raise RuntimeError('no prepared anonymous statement found')
+
+                if self._last_anon_compiled.out_type_id == type_id:
+                    type_data = self._last_anon_compiled.out_type_data
+                elif self._last_anon_compiled.in_type_id == type_id:
+                    type_data = self._last_anon_compiled.in_type_data
+                else:
+                    raise RuntimeError(
+                        f'no spec available for type id {type_id}')
+
+                msg = WriteBuffer.new_message(b'T')
+                msg.write_int16(len(type_data))
+                msg.write_bytes(type_data)
+                msg.end_message()
+                self._write(msg)
         else:
-            1 / 0
+            raise RuntimeError('unsupported "describe" message')
 
-    cdef _recode_args(self, bytes bind_args):
+    async def main(self):
         cdef:
-            FRBuffer in_buf
-            WriteBuffer out_buf = WriteBuffer.new()
-            int32_t argsnum
-            ssize_t in_len
+            char mtype
 
-        assert cpython.PyBytes_CheckExact(bind_args)
-        frb_init(
-            &in_buf,
-            cpython.PyBytes_AS_STRING(bind_args),
-            cpython.Py_SIZE(bind_args))
+        try:
+            await self.auth()
 
-        # all parameters are in binary
-        out_buf.write_int32(0x00010001)
+            while True:
+                await self.wait_for_message()
+                mtype = self.buffer.get_message_type()
 
-        frb_read(&in_buf, 4)  # ignore buffer length
+                try:
+                    if mtype == b'P':
+                        await self.parse()
 
-        # number of elements in the tuple
-        argsnum = hton.unpack_int32(frb_read(&in_buf, 4))
+                    elif mtype == b'D':
+                        await self.describe()
 
-        out_buf.write_int16(<int16_t>argsnum)
+                    else:
+                        raise RuntimeError(
+                            f'unknown message type {chr(mtype)!r}')
+                finally:
+                    self.buffer.finish_message()
 
-        in_len = frb_get_len(&in_buf)
-        out_buf.write_cstr(frb_read_all(&in_buf), in_len)
+        except Exception as ex:
+            self.loop.call_exception_handler({
+                'message': 'unhandled error in edgedb protocol',
+                'exception': ex,
+                'protocol': self,
+                'transport': self._transport,
+                'task': self._main_task,
+            })
 
-        # All columns are in binary format
-        out_buf.write_int32(0x00010001)
-        return out_buf
-
-    cdef _handle__execute(self):
-        stmt_name = self.buffer.read_utf8()
-        bind_args = self.buffer.consume_message()
-        query = self._queries[stmt_name]
-        bind_args = self._recode_args(bind_args)
-        self.server.edgecon_execute(self, query, bind_args)
-
-    cdef _handle__startup(self):
-        cdef:
-            int16_t hi
-            int16_t lo
-            WriteBuffer buf
-
-        if self.buffer.len() < 4:
-            return False
-
-        hi = self.buffer.read_int16()
-        lo = self.buffer.read_int16()
-
-        if hi != 1 or lo != 0:
-            self._transport.close()
-            return False
-
-        self._con_status = EDGECON_STARTED
-        return True
-
-    def _send_data(self, data):
-        self._transport.write(data)
-
-    def get_user(self):
-        return self._user
-
-    def get_dbname(self):
-        return self._dbname
-
-    # protocol methods
+            # XXX instead of aborting:
+            # try to send an error message to the client
+            self._transport.abort()
 
     def connection_made(self, transport):
         if self._con_status != EDGECON_NEW:
             raise RuntimeError('connection_made: invalid connection status')
         self._transport = transport
+        self._main_task = self.loop.create_task(self.main())
         # self.server.edgecon_register(self)
 
     def connection_lost(self, exc):
@@ -363,7 +263,13 @@ cdef class EdgeConnection:
 
     def data_received(self, data):
         self.buffer.feed_data(data)
-        self._read_buffer_messages()
+
+        if self._con_status == EDGECON_NEW and self.buffer.len() >= 4:
+            self._startup_msg_waiter.set_result(True)
+
+        elif self._msg_take_waiter is not None and self.buffer.take_message():
+            self._msg_take_waiter.set_result(True)
+            self._msg_take_waiter = None
 
     def eof_received(self):
         pass

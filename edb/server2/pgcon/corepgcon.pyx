@@ -36,8 +36,6 @@ cdef class CorePGProto:
 
         self.edgecon = None
 
-        self._skip_discard = False
-
         self._reset_result()
 
     cdef _write(self, buf):
@@ -115,10 +113,7 @@ cdef class CorePGProto:
                     self.state = PGPROTO_ERROR_CONSUME
 
             finally:
-                if self._skip_discard:
-                    self._skip_discard = False
-                else:
-                    self.buffer.discard_message()
+                self.buffer.finish_message()
 
     cdef _process__auth(self, char mtype):
         if mtype == b'R':
@@ -179,7 +174,7 @@ cdef class CorePGProto:
                 self.result_data = None
 
             if self.buffer.has_message():
-                self._skip_discard = True
+                self.buffer.put_message()
                 return
 
         elif mtype == b's':

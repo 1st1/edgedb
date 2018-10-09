@@ -334,6 +334,12 @@ setup(
     },
     ext_modules=[
         distutils_extension.Extension(
+            "edb.server2.avg",
+            ["edb/server2/avg.pyx"],
+            extra_compile_args=EXT_CFLAGS,
+            extra_link_args=EXT_LDFLAGS),
+
+        distutils_extension.Extension(
             "edb.server2.pgproto.pgproto",
             ["edb/server2/pgproto/pgproto.pyx"],
             extra_compile_args=EXT_CFLAGS,
