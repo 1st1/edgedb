@@ -78,3 +78,5 @@ cdef class EdgeConnection:
         object _last_anon_compiled
 
     cdef _write(self, buf)
+
+    cdef WriteBuffer recode_bind_args(self, bytes bind_args)

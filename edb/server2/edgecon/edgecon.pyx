@@ -71,6 +71,9 @@ cdef class EdgeConnection:
     cdef _write(self, buf):
         self._transport.write(memoryview(buf))
 
+    def _send_data(self, buf):
+        self._write(buf)
+
     async def wait_for_message(self):
         if self.buffer.take_message():
             return
@@ -157,8 +160,8 @@ cdef class EdgeConnection:
             raise RuntimeError('named statements are not yet supported')
 
         eql = self.buffer.read_utf8()
-
-        assert stmt_name == ''
+        if not eql:
+            raise RuntimeError('empty query')
 
         compiled = self.dbview.lookup_compiled_query(eql)
         if compiled is not None:
@@ -183,29 +186,68 @@ cdef class EdgeConnection:
         if rtype == b'T':
             # describe "type id"
             stmt_name = self.buffer.read_utf8()
-            type_id = self.buffer.read_cstr()
+            type_num = self.buffer.read_int16()
 
-            if stmt_name:
-                raise RuntimeError('named statements are not yet supported')
-            else:
-                if self._last_anon_compiled is None:
-                    raise RuntimeError('no prepared anonymous statement found')
+            msg = WriteBuffer.new_message(b'T')
 
-                if self._last_anon_compiled.out_type_id == type_id:
-                    type_data = self._last_anon_compiled.out_type_data
-                elif self._last_anon_compiled.in_type_id == type_id:
-                    type_data = self._last_anon_compiled.in_type_data
+            for i in range(type_num):
+                type_id = self.buffer.read_bytes(16)
+
+                if stmt_name:
+                    raise RuntimeError('named statements are not yet supported')
                 else:
-                    raise RuntimeError(
-                        f'no spec available for type id {type_id}')
+                    if self._last_anon_compiled is None:
+                        raise RuntimeError(
+                            'no prepared anonymous statement found')
 
-                msg = WriteBuffer.new_message(b'T')
-                msg.write_int16(len(type_data))
-                msg.write_bytes(type_data)
-                msg.end_message()
-                self._write(msg)
+                    if self._last_anon_compiled.out_type_id == type_id:
+                        type_data = self._last_anon_compiled.out_type_data
+                    elif self._last_anon_compiled.in_type_id == type_id:
+                        type_data = self._last_anon_compiled.in_type_data
+                    else:
+                        raise RuntimeError(
+                            f'no spec available for type id {type_id}')
+
+                    msg.write_int16(len(type_data))
+                    msg.write_bytes(type_data)
+
+            msg.end_message()
+            self._write(msg)
+
         else:
-            raise RuntimeError('unsupported "describe" message')
+            raise RuntimeError(
+                f'unsupported "describe" message {chr(rtype)!r}')
+
+    async def execute(self):
+        cdef:
+            WriteBuffer bound_args_buf
+
+        stmt_name = self.buffer.read_utf8()
+        bind_args = self.buffer.consume_message()
+        compiled = None
+
+        if stmt_name:
+            raise RuntimeError('named statements are not yet supported')
+        else:
+            if self._last_anon_compiled is None:
+                raise RuntimeError('no parsed anonymous query')
+
+            compiled = self._last_anon_compiled
+
+        bound_args_buf = self.recode_bind_args(bind_args)
+        await self.pgcon.connection.execute_anonymous(
+            self, compiled.sql, bound_args_buf)
+
+        self._write(WriteBuffer.new_message(b'C').end_message())
+
+    async def sync(self):
+        cdef:
+            WriteBuffer buf
+
+        buf = WriteBuffer.new_message(b'Z')
+        buf.write_byte(b'I')
+        buf.end_message()
+        self._write(buf)
 
     async def main(self):
         cdef:
@@ -215,7 +257,8 @@ cdef class EdgeConnection:
             await self.auth()
 
             while True:
-                await self.wait_for_message()
+                if not self.buffer.take_message():
+                    await self.wait_for_message()
                 mtype = self.buffer.get_message_type()
 
                 try:
@@ -225,11 +268,20 @@ cdef class EdgeConnection:
                     elif mtype == b'D':
                         await self.describe()
 
+                    elif mtype == b'E':
+                        await self.execute()
+
+                    elif mtype == b'S':
+                        await self.sync()
+
                     else:
                         raise RuntimeError(
                             f'unknown message type {chr(mtype)!r}')
                 finally:
                     self.buffer.finish_message()
+
+        except ConnectionAbortedError:
+            return
 
         except Exception as ex:
             self.loop.call_exception_handler({
@@ -244,6 +296,36 @@ cdef class EdgeConnection:
             # try to send an error message to the client
             self._transport.abort()
 
+    cdef WriteBuffer recode_bind_args(self, bytes bind_args):
+        cdef:
+            FRBuffer in_buf
+            WriteBuffer out_buf = WriteBuffer.new()
+            int32_t argsnum
+            ssize_t in_len
+
+        assert cpython.PyBytes_CheckExact(bind_args)
+        frb_init(
+            &in_buf,
+            cpython.PyBytes_AS_STRING(bind_args),
+            cpython.Py_SIZE(bind_args))
+
+        # all parameters are in binary
+        out_buf.write_int32(0x00010001)
+
+        frb_read(&in_buf, 4)  # ignore buffer length
+
+        # number of elements in the tuple
+        argsnum = hton.unpack_int32(frb_read(&in_buf, 4))
+
+        out_buf.write_int16(<int16_t>argsnum)
+
+        in_len = frb_get_len(&in_buf)
+        out_buf.write_cstr(frb_read_all(&in_buf), in_len)
+
+        # All columns are in binary format
+        out_buf.write_int32(0x00010001)
+        return out_buf
+
     def connection_made(self, transport):
         if self._con_status != EDGECON_NEW:
             raise RuntimeError('connection_made: invalid connection status')
@@ -252,8 +334,11 @@ cdef class EdgeConnection:
         # self.server.edgecon_register(self)
 
     def connection_lost(self, exc):
-        # self.server.edgecon_unregister(self)
-        pass
+        if self._msg_take_waiter is not None:
+            self._msg_take_waiter.set_exception(ConnectionAbortedError())
+            self._msg_take_waiter = None
+
+        self._transport = None
 
     def pause_writing(self):
         pass

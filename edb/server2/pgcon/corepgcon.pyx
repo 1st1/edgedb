@@ -150,7 +150,7 @@ cdef class CorePGProto:
             # ParseComplete
             self.buffer.discard_message()
 
-        elif mtype == b'E':
+        elif mtype == b'E':  ## result
             # ErrorResponse
             self._parse_msg_error_response(True)
 
@@ -173,15 +173,11 @@ cdef class CorePGProto:
                 self.edgecon._send_data(self.result_data)
                 self.result_data = None
 
-            if self.buffer.has_message():
-                self.buffer.put_message()
-                return
-
-        elif mtype == b's':
+        elif mtype == b's':  ## result
             # PortalSuspended
             self.buffer.discard_message()
 
-        elif mtype == b'C':
+        elif mtype == b'C':  ## result
             # CommandComplete
             if self.result_data is not None:
                 self.edgecon._send_data(self.result_data)
@@ -199,7 +195,7 @@ cdef class CorePGProto:
             # BindComplete
             self.buffer.discard_message()
 
-        elif mtype == b'I':
+        elif mtype == b'I':  ## result
             # EmptyQueryResponse
             self.buffer.discard_message()
 
