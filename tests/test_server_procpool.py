@@ -242,8 +242,8 @@ class TestProcPool(tb.TestCase):
             worker_args=([123],),
             name='test_procpool_8')
 
-        worker = next(iter(pool._workers))
-        pid = worker._proc.pid
+        worker = next(pool.manager.iter_workers())
+        pid = worker.get_pid()
 
         try:
             t = asyncio.create_task(pool.call('test1', 10))
@@ -291,6 +291,8 @@ class TestProcPool(tb.TestCase):
             worker_args=([123],),
             name='test_procpool_10')
 
+        manager = pool.manager
+
         try:
             async with taskgroup.TaskGroup() as g:
                 for _ in range(100):
@@ -298,8 +300,8 @@ class TestProcPool(tb.TestCase):
 
             await asyncio.sleep(0.5)
 
-            self.assertEqual(pool._stats_spawned, 10)
-            self.assertEqual(pool._stats_killed, 8)
+            self.assertEqual(manager._stats_spawned, 10)
+            self.assertEqual(manager._stats_killed, 8)
 
             w1 = await pool.acquire()
             w2 = await pool.acquire()
@@ -307,18 +309,18 @@ class TestProcPool(tb.TestCase):
 
             await asyncio.sleep(0.5)
 
-            self.assertEqual(pool._stats_spawned, 11)
-            self.assertEqual(pool._stats_killed, 8)
+            self.assertEqual(manager._stats_spawned, 11)
+            self.assertEqual(manager._stats_killed, 8)
 
             await w1.call('test1', 0.1)
             await w2.call('test1', 0.1)
             await w3.call('test1', 0.1)
 
-            self.assertEqual(pool._stats_spawned, 11)
-            self.assertEqual(pool._stats_killed, 8)
+            self.assertEqual(manager._stats_spawned, 11)
+            self.assertEqual(manager._stats_killed, 8)
 
         finally:
             await pool.stop()
 
-        self.assertEqual(pool._stats_spawned, 11)
-        self.assertEqual(pool._stats_killed, 11)
+        self.assertEqual(manager._stats_spawned, 11)
+        self.assertEqual(manager._stats_killed, 11)

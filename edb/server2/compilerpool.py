@@ -371,6 +371,9 @@ class Compiler:
             sql=sql_bytes,
             sql_hash=sql_hash)
 
+    async def connect(self, dbname, dbver):
+        await self._get_database(dbname, dbver)
+
     async def compile_edgeql(self, dbname, dbver, eql):
         db = await self._get_database(dbname, dbver)
         return self._compile(db, eql)
@@ -383,6 +386,14 @@ async def create_pool(*, capacity: int,
     return await procpool.create_pool(
         min_capacity=capacity,
         max_capacity=capacity,
+        runstate_dir=runstate_dir,
+        name='edgedb-compiler',
+        worker_cls=Compiler,
+        worker_args=(connection_spec,))
+
+
+async def create_manager(*, runstate_dir: str, connection_spec: dict):
+    return await procpool.create_manager(
         runstate_dir=runstate_dir,
         name='edgedb-compiler',
         worker_cls=Compiler,
