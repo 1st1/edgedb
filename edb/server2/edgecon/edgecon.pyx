@@ -35,6 +35,8 @@ from edb.server2.pgproto.pgproto cimport (
     frb_get_len,
 )
 
+from edb.server2.pgcon cimport pgcon
+
 
 import asyncio
 
@@ -70,7 +72,7 @@ cdef class EdgeConnection:
     cdef write(self, WriteBuffer buf):
         if self._write_buf is not None:
             self._write_buf.write_buffer(buf)
-            if self._write_buf.len() > FLUSH_BUFFER_AFTER:
+            if self._write_buf.len() >= FLUSH_BUFFER_AFTER:
                 self.flush()
         else:
             self._write_buf = buf
@@ -228,10 +230,18 @@ cdef class EdgeConnection:
     async def execute(self):
         cdef:
             WriteBuffer bound_args_buf
+            bint send_sync
 
         stmt_name = self.buffer.read_utf8()
         bind_args = self.buffer.consume_message()
         compiled = None
+
+        send_sync = False
+        if self.buffer.take_message_type(b'S'):
+            # A "Sync" message follows this "Execute" message;
+            # send it right away.
+            send_sync = True
+            self.buffer.finish_message()
 
         if stmt_name:
             raise RuntimeError('named statements are not yet supported')
@@ -242,19 +252,24 @@ cdef class EdgeConnection:
             compiled = self._last_anon_compiled
 
         bound_args_buf = self.recode_bind_args(bind_args)
+
         await self.backend.pgcon.execute_anonymous(
-            self, compiled.sql, bound_args_buf)
+            self, compiled.sql, bound_args_buf,
+            send_sync)
 
         self.write(WriteBuffer.new_message(b'C').end_message())
+
+        if send_sync:
+            self.write(self.pgcon_last_sync_status())
+            self.flush()
 
     async def sync(self):
         cdef:
             WriteBuffer buf
 
-        buf = WriteBuffer.new_message(b'Z')
-        buf.write_byte(b'I')
-        buf.end_message()
-        self.write(buf)
+        await self.backend.pgcon.sync()
+        self.write(self.pgcon_last_sync_status())
+
         self.flush()
 
     async def main(self):
@@ -302,6 +317,25 @@ cdef class EdgeConnection:
             # XXX instead of aborting:
             # try to send an error message to the client
             self._transport.abort()
+
+    cdef pgcon_last_sync_status(self):
+        cdef:
+            pgcon.PGTransactionStatus xact_status
+            WriteBuffer buf
+
+        xact_status = <pgcon.PGTransactionStatus>(
+            (<pgcon.PGProto>self.backend.pgcon).xact_status)
+
+        buf = WriteBuffer.new_message(b'Z')
+        if xact_status == pgcon.PQTRANS_IDLE:
+            buf.write_byte(b'I')
+        elif xact_status == pgcon.PQTRANS_INTRANS:
+            buf.write_byte(b'T')
+        elif xact_status == pgcon.PQTRANS_INERROR:
+            buf.write_byte(b'E')
+        else:
+            raise RuntimeError('unknown postgres connection status')
+        return buf.end_message()
 
     cdef fallthrough(self):
         cdef:
@@ -354,7 +388,8 @@ cdef class EdgeConnection:
         # self.server.edgecon_register(self)
 
     def connection_lost(self, exc):
-        if self._msg_take_waiter is not None:
+        if (self._msg_take_waiter is not None and
+                not self._msg_take_waiter.done()):
             self._msg_take_waiter.set_exception(ConnectionAbortedError())
             self._msg_take_waiter = None
 

@@ -63,4 +63,5 @@ cdef class PGProto:
     cdef parse_error_message(self)
     cdef parse_sync_message(self)
 
+    cdef parse_notification(self)
     cdef fallthrough(self)

@@ -84,10 +84,25 @@ cdef class PGProto:
         if self.msg_waiter and not self.msg_waiter.done():
             self.msg_waiter.set_exception(ConnectionAbortedError())
 
+    async def sync(self):
+        self.write(SYNC_MESSAGE)
+
+        while True:
+            if not self.buffer.take_message():
+                await self.wait_for_message()
+            mtype = self.buffer.get_message_type()
+
+            if mtype == b'Z':
+                self.parse_sync_message()
+                return
+            else:
+                self.fallthrough()
+
     async def execute_anonymous(self,
                                 edgecon.EdgeConnection edgecon,
                                 bytes query,
-                                WriteBuffer bind_data):
+                                WriteBuffer bind_data,
+                                bint send_sync):
 
         cdef:
             WriteBuffer packet
@@ -115,67 +130,76 @@ cdef class PGProto:
         buf.write_int32(0)  # limit: number of rows to return; 0 - all
         packet.write_buffer(buf.end_message())
 
-        packet.write_bytes(PG_SYNC_MESSAGE)
+        if send_sync:
+            packet.write_bytes(SYNC_MESSAGE)
+        else:
+            packet.write_bytes(FLUSH_MESSAGE)
         self.write(packet)
 
-        buf = None
-        while True:
-            if not self.buffer.take_message():
-                await self.wait_for_message()
-            mtype = self.buffer.get_message_type()
+        try:
+            buf = None
+            while True:
+                if not self.buffer.take_message():
+                    await self.wait_for_message()
+                mtype = self.buffer.get_message_type()
 
-            try:
-                if mtype == b'1':
-                    # ParseComplete
-                    self.buffer.discard_message()
+                try:
+                    if mtype == b'1':
+                        # ParseComplete
+                        self.buffer.discard_message()
 
-                elif mtype == b'E':  ## result
-                    # ErrorResponse
-                    er = self.parse_error_message()
-                    raise RuntimeError(str(er))
+                    elif mtype == b'E':  ## result
+                        # ErrorResponse
+                        er = self.parse_error_message()
+                        raise RuntimeError(str(er))
 
-                elif mtype == b'Z':
-                    # ReadyForQuery
-                    self.parse_sync_message()
-                    return
+                    elif mtype == b'n':
+                        # NoData
+                        self.buffer.discard_message()
 
-                elif mtype == b'n':
-                    # NoData
-                    self.buffer.discard_message()
+                    elif mtype == b'D':
+                        # DataRow
+                        if buf is None:
+                            buf = WriteBuffer.new()
 
-                elif mtype == b'D':
-                    # DataRow
-                    if buf is None:
-                        buf = WriteBuffer.new()
+                        self.buffer.redirect_messages(buf, b'D')
+                        if buf.len() >= DATA_BUFFER_SIZE:
+                            edgecon.write(buf)
+                            buf = None
 
-                    self.buffer.redirect_messages(buf, b'D')
-                    if buf.len() > DATA_BUFFER_SIZE:
-                        edgecon.write(buf)
-                        buf = None
+                    elif mtype == b's':  ## result
+                        # PortalSuspended
+                        self.buffer.discard_message()
+                        return
 
-                elif mtype == b's':  ## result
-                    # PortalSuspended
-                    self.buffer.discard_message()
+                    elif mtype == b'C':  ## result
+                        # CommandComplete
+                        cmsg = WriteBuffer.new_message(b'C').end_message()
+                        if buf is not None:
+                            buf.write_buffer(cmsg)
+                            edgecon.write(buf)
+                            buf = None
+                        else:
+                            edgecon.write(cmsg)
+                        return
 
-                elif mtype == b'C':  ## result
-                    # CommandComplete
-                    if buf is not None:
-                        edgecon.write(buf)
-                        buf = None
+                    elif mtype == b'2':
+                        # BindComplete
+                        self.buffer.discard_message()
 
-                elif mtype == b'2':
-                    # BindComplete
-                    self.buffer.discard_message()
+                    elif mtype == b'I':  ## result
+                        # EmptyQueryResponse
+                        self.buffer.discard_message()
+                        return
 
-                elif mtype == b'I':  ## result
-                    # EmptyQueryResponse
-                    self.buffer.discard_message()
+                    else:
+                        self.fallthrough()
 
-                else:
-                    self.fallthrough()
-
-            finally:
-                self.buffer.finish_message()
+                finally:
+                    self.buffer.finish_message()
+        finally:
+            if send_sync:
+                await self.wait_for_sync()
 
     async def connect(self):
         cdef:
@@ -251,30 +275,51 @@ cdef class PGProto:
             finally:
                 self.buffer.finish_message()
 
+    async def wait_for_sync(self):
+        while True:
+            if not self.buffer.take_message():
+                await self.wait_for_message()
+            mtype = self.buffer.get_message_type()
+            if mtype == b'Z':
+                self.parse_sync_message()
+                return
+            else:
+                if not self.parse_notification():
+                    self.buffer.discard_message()
+
     cdef write(self, buf):
         self.transport.write(memoryview(buf))
 
     cdef fallthrough(self):
+        if self.parse_notification():
+            return
+
+        cdef:
+            char mtype = self.buffer.get_message_type()
+
+        raise RuntimeError(
+            f'unexpected message type {chr(mtype)!r}')
+
+    cdef parse_notification(self):
         cdef:
             char mtype = self.buffer.get_message_type()
 
         if mtype == b'S':
             # ParameterStatus
             self.buffer.discard_message()
-            return
+            return True
 
         elif mtype == b'A':
             # NotificationResponse
             self.buffer.discard_message()
-            return
+            return True
 
         elif mtype == b'N':
             # NoticeResponse
             self.buffer.discard_message()
-            return
+            return True
 
-        raise RuntimeError(
-            f'unexpected message type {chr(mtype)!r}')
+        return False
 
     cdef parse_error_message(self):
         cdef:
@@ -291,6 +336,7 @@ cdef class PGProto:
 
             parsed[chr(code)] = message.decode()
 
+        self.buffer.finish_message()
         return parsed
 
     cdef parse_sync_message(self):
@@ -329,7 +375,7 @@ cdef class PGProto:
             self.connected_fut.set_exception(ConnectionAbortedError())
             return
 
-        if self.msg_waiter is not None:
+        if self.msg_waiter is not None and not self.msg_waiter.done():
             self.msg_waiter.set_exception(ConnectionAbortedError())
             self.msg_waiter = None
 
@@ -352,4 +398,5 @@ cdef class PGProto:
         pass
 
 
-cdef bytes PG_SYNC_MESSAGE = bytes(WriteBuffer.new_message(b'S').end_message())
+cdef bytes SYNC_MESSAGE = bytes(WriteBuffer.new_message(b'S').end_message())
+cdef bytes FLUSH_MESSAGE = bytes(WriteBuffer.new_message(b'H').end_message())
