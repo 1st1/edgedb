@@ -71,6 +71,19 @@ cdef class PGProto:
         self.backend_pid = -1
         self.backend_secret = -1
 
+    def is_connected(self):
+        return bool(self.connected and self.transport is not None)
+
+    def abort(self):
+        if not self.transport:
+            return
+        self.transport.abort()
+        self.transport = None
+        self.connected = False
+
+        if self.msg_waiter and not self.msg_waiter.done():
+            self.msg_waiter.set_exception(ConnectionAbortedError())
+
     async def execute_anonymous(self,
                                 edgecon.EdgeConnection edgecon,
                                 bytes query,

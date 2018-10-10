@@ -60,9 +60,7 @@ cdef class EdgeConnection:
         object _transport
 
         object server
-        object pgpool
-        object cpool
-        object dbindex
+        object backend
         object loop
         readonly object dbview
 

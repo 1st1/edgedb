@@ -42,29 +42,24 @@ import asyncio
 @cython.final
 cdef class EdgeConnection:
 
-    def __init__(self, server, loop, cpool, pgpool, dbindex):
+    def __init__(self, server):
         self._con_status = EDGECON_NEW
         self._state = EDGEPROTO_AUTH
         self._id = server.new_edgecon_id()
-
         self.server = server
-        self.loop = loop
-        self.cpool = cpool
-        self.pgpool = pgpool
-        self.dbindex = dbindex
+
+        self.loop = server.get_loop()
         self.dbview = None
+        self.backend = None
 
         self._transport = None
         self.buffer = ReadBuffer()
-
-        self.pgcon = None
-        self.comp = None
 
         self._parsing = True
         self._reading_messages = False
 
         self._main_task = None
-        self._startup_msg_waiter = loop.create_future()
+        self._startup_msg_waiter = self.loop.create_future()
         self._msg_take_waiter = None
 
         self._last_anon_compiled = None
@@ -105,9 +100,10 @@ cdef class EdgeConnection:
             database = self.buffer.read_utf8()
 
             # XXX implement auth
-            self.dbview = self.dbindex.new_view(database, user=user)
-            self.pgcon = await self.pgpool.acquire(database)
-            self.comp = await self.cpool.acquire()
+            self.dbview = self.server.new_view(
+                dbname=database, user=user)
+            self.backend = await self.server.new_backend(
+                dbname=database, dbver=self.dbview.dbver)
 
             buf = WriteBuffer()
 
@@ -166,7 +162,7 @@ cdef class EdgeConnection:
             self.parse_success(compiled)
             return
 
-        compiled = await self.comp.call(
+        compiled = await self.backend.compiler.call(
             'compile_edgeql', self.dbview.dbname, self.dbview.dbver, eql)
 
         self.dbview.cache_compiled_query(eql, compiled)
@@ -233,7 +229,7 @@ cdef class EdgeConnection:
             compiled = self._last_anon_compiled
 
         bound_args_buf = self.recode_bind_args(bind_args)
-        await self.pgcon.connection.execute_anonymous(
+        await self.backend.pgcon.execute_anonymous(
             self, compiled.sql, bound_args_buf)
 
         self.write(WriteBuffer.new_message(b'C').end_message())
@@ -337,6 +333,8 @@ cdef class EdgeConnection:
             self._msg_take_waiter = None
 
         self._transport = None
+
+        self.loop.create_task(self.backend.close())
 
     def pause_writing(self):
         pass

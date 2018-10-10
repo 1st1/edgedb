@@ -17,9 +17,6 @@
 #
 
 
-__all__ = 'create_pool',
-
-
 import asyncio
 import collections
 import dataclasses
@@ -41,7 +38,6 @@ from edb.lang.schema import error as s_err
 from edb.lang.schema import types as s_types
 
 from . import dbstate
-from . import procpool
 
 
 @dataclasses.dataclass(frozen=True)
@@ -377,24 +373,3 @@ class Compiler:
     async def compile_edgeql(self, dbname, dbver, eql):
         db = await self._get_database(dbname, dbver)
         return self._compile(db, eql)
-
-
-async def create_pool(*, capacity: int,
-                      runstate_dir: str,
-                      connection_spec: dict):
-
-    return await procpool.create_pool(
-        min_capacity=capacity,
-        max_capacity=capacity,
-        runstate_dir=runstate_dir,
-        name='edgedb-compiler',
-        worker_cls=Compiler,
-        worker_args=(connection_spec,))
-
-
-async def create_manager(*, runstate_dir: str, connection_spec: dict):
-    return await procpool.create_manager(
-        runstate_dir=runstate_dir,
-        name='edgedb-compiler',
-        worker_cls=Compiler,
-        worker_args=(connection_spec,))

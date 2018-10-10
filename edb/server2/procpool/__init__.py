@@ -20,4 +20,4 @@
 __all__ = 'create_pool',
 
 
-from .pool import create_pool  # NoQA
+from .pool import create_pool, create_manager  # NoQA
