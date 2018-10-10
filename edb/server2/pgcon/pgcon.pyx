@@ -174,13 +174,9 @@ cdef class PGProto:
 
                     elif mtype == b'C':  ## result
                         # CommandComplete
-                        cmsg = WriteBuffer.new_message(b'C').end_message()
                         if buf is not None:
-                            buf.write_buffer(cmsg)
                             edgecon.write(buf)
                             buf = None
-                        else:
-                            edgecon.write(cmsg)
                         return
 
                     elif mtype == b'2':
