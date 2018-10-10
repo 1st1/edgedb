@@ -148,16 +148,6 @@ cdef class EdgeConnection:
 
     #############
 
-    def parse_success(self, compiled):
-        self._last_anon_compiled = compiled
-
-        buf = WriteBuffer.new_message(b'1')  # ParseComplete
-        buf.write_bytestring(compiled.out_type_id)
-        buf.write_bytestring(compiled.in_type_id)
-        buf.end_message()
-
-        self.write(buf)
-
     async def parse(self):
         cdef:
             char mtype
@@ -173,16 +163,20 @@ cdef class EdgeConnection:
             raise RuntimeError('empty query')
 
         compiled = self.dbview.lookup_compiled_query(eql)
-        if compiled is not None:
-            self.parse_success(compiled)
-            return
+        if compiled is None:
+            compiled = await self.backend.compiler.call(
+                'compile_edgeql', self.dbview.dbname, self.dbview.dbver, eql)
 
-        compiled = await self.backend.compiler.call(
-            'compile_edgeql', self.dbview.dbname, self.dbview.dbver, eql)
+            self.dbview.cache_compiled_query(eql, compiled)
 
-        self.dbview.cache_compiled_query(eql, compiled)
+        self._last_anon_compiled = compiled
 
-        self.parse_success(compiled)
+        buf = WriteBuffer.new_message(b'1')  # ParseComplete
+        buf.write_bytes(compiled.out_type_id)
+        buf.write_bytes(compiled.in_type_id)
+        buf.end_message()
+
+        self.write(buf)
 
     #############
 

@@ -35,9 +35,9 @@ class CompiledQuery:
     dbver: int
 
     out_type_data: bytes = dataclasses.field(repr=False)
-    out_type_id: bytes = dataclasses.field(repr=False)
+    out_type_id: bytes
     in_type_data: bytes = dataclasses.field(repr=False)
-    in_type_id: bytes = dataclasses.field(repr=False)
+    in_type_id: bytes
 
     sql: bytes
     sql_hash: bytes = dataclasses.field(repr=False)
