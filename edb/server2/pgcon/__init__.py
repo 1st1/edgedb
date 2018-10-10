@@ -18,6 +18,3 @@
 
 
 from .pgcon import PGProto
-
-
-__all__ = ('PGProto',)

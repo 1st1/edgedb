@@ -23,7 +23,7 @@ from libc.stdint cimport int8_t, uint8_t, int16_t, uint16_t, \
                          int32_t, uint32_t, int64_t, uint64_t, \
                          UINT32_MAX
 
-from edgedb.pgproto cimport hton
+from edb.server2.pgproto cimport hton
 from edb.server2.pgproto.pgproto cimport (
     WriteBuffer,
     ReadBuffer,
@@ -68,11 +68,8 @@ cdef class EdgeConnection:
 
         self._last_anon_compiled = None
 
-    cdef _write(self, buf):
+    cdef write(self, buf):
         self._transport.write(memoryview(buf))
-
-    def _send_data(self, buf):
-        self._write(buf)
 
     async def wait_for_message(self):
         if self.buffer.take_message():
@@ -128,7 +125,7 @@ cdef class EdgeConnection:
             msg_buf.end_message()
             buf.write_buffer(msg_buf)
 
-            self._write(buf)
+            self.write(buf)
 
             self.buffer.finish_message()
 
@@ -145,7 +142,7 @@ cdef class EdgeConnection:
         buf.write_bytestring(compiled.in_type_id)
         buf.end_message()
 
-        self._write(buf)
+        self.write(buf)
 
         self._state = EDGEPROTO_IDLE
 
@@ -212,7 +209,7 @@ cdef class EdgeConnection:
                     msg.write_bytes(type_data)
 
             msg.end_message()
-            self._write(msg)
+            self.write(msg)
 
         else:
             raise RuntimeError(
@@ -238,7 +235,7 @@ cdef class EdgeConnection:
         await self.pgcon.connection.execute_anonymous(
             self, compiled.sql, bound_args_buf)
 
-        self._write(WriteBuffer.new_message(b'C').end_message())
+        self.write(WriteBuffer.new_message(b'C').end_message())
 
     async def sync(self):
         cdef:
@@ -247,7 +244,7 @@ cdef class EdgeConnection:
         buf = WriteBuffer.new_message(b'Z')
         buf.write_byte(b'I')
         buf.end_message()
-        self._write(buf)
+        self.write(buf)
 
     async def main(self):
         cdef:

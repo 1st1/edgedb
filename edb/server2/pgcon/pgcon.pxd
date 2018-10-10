@@ -16,6 +16,7 @@
 # limitations under the License.
 #
 
+
 cimport cython
 cimport cpython
 
@@ -29,39 +30,34 @@ from edb.server2.pgproto.pgproto cimport (
 
 from edb.server2.pgproto.debug cimport PG_DEBUG
 
-include "./corepgcon.pxd"
+
+cdef enum PGTransactionStatus:
+    PQTRANS_IDLE = 0                 # connection idle
+    PQTRANS_ACTIVE = 1               # command in progress
+    PQTRANS_INTRANS = 2              # idle, within transaction block
+    PQTRANS_INERROR = 3              # idle, within failed transaction
+    PQTRANS_UNKNOWN = 4              # cannot determine status
 
 
-cdef class PGProto(CorePGProto):
+cdef class PGProto:
 
     cdef:
+        ReadBuffer buffer
+
         object loop
-        object address
-        object cancel_sent_waiter
-        object cancel_waiter
-        object waiter
-        bint return_extra
-        object create_future
-        object completed_callback
-        object connection
-        bint is_reading
+        str dbname
 
-        bytes last_query
+        object transport
+        object msg_waiter
 
-        bint closing
+        bint connected
+        object connected_fut
 
-        readonly uint64_t queries_count
+        PGTransactionStatus xact_status
 
-    cdef _check_state(self)
-    cdef _new_waiter(self)
-    cdef _coreproto_error(self)
+        readonly int32_t backend_pid
+        readonly int32_t backend_secret
 
-    cdef _on_result__connect(self, object waiter)
-    cdef _on_result__execute_anonymous(self, object waiter)
-
-    cdef _handle_waiter_on_connection_lost(self, cause)
-
-    cdef _dispatch_result(self)
-
-    cdef inline resume_reading(self)
-    cdef inline pause_reading(self)
+    cdef write(self, buf)
+    cdef parse_error_message(self)
+    cdef parse_sync_message(self)
