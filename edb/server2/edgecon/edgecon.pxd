@@ -38,21 +38,11 @@ cdef enum EdgeConnectionStatus:
     EDGECON_BAD = 3
 
 
-cdef enum EdgeProtoState:
-    EDGEPROTO_IDLE = 0
-
-    EDGEPROTO_AUTH = 1
-
-
-    EDGEPROTO_CLOSED = 100
-
-
 @cython.final
 cdef class EdgeConnection:
 
     cdef:
         EdgeConnectionStatus _con_status
-        EdgeProtoState _state
         bint _awaiting
         bint _parsing
         bint _reading_messages
@@ -75,7 +65,11 @@ cdef class EdgeConnection:
         object _main_task
 
         object _last_anon_compiled
+        WriteBuffer _write_buf
 
-    cdef write(self, buf)
+    cdef write(self, WriteBuffer buf)
+    cdef flush(self)
+
+    cdef fallthrough(self)
 
     cdef WriteBuffer recode_bind_args(self, bytes bind_args)

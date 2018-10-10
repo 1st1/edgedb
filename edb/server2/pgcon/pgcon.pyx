@@ -172,8 +172,7 @@ cdef class PGProto:
                     self.buffer.discard_message()
 
                 else:
-                    raise RuntimeError(
-                        f'unsupported reply to execute message {chr(mtype)!r}')
+                    self.fallthrough()
 
             finally:
                 self.buffer.finish_message()
@@ -230,11 +229,6 @@ cdef class PGProto:
                     if status != 0:
                         raise RuntimeError('unsupported auth method')
 
-                elif mtype == b'S':
-                    # ParameterStatus
-                    # XXX can come any time, handle it
-                    self.buffer.finish_message()
-
                 elif mtype == b'K':
                     # BackendKeyData
                     self.backend_pid = self.buffer.read_int32()
@@ -252,13 +246,35 @@ cdef class PGProto:
                     return
 
                 else:
-                    raise RuntimeError(
-                        f'unsupported reply to auth message {chr(mtype)!r}')
+                    self.fallthrough()
+
             finally:
                 self.buffer.finish_message()
 
     cdef write(self, buf):
         self.transport.write(memoryview(buf))
+
+    cdef fallthrough(self):
+        cdef:
+            char mtype = self.buffer.get_message_type()
+
+        if mtype == b'S':
+            # ParameterStatus
+            self.buffer.discard_message()
+            return
+
+        elif mtype == b'A':
+            # NotificationResponse
+            self.buffer.discard_message()
+            return
+
+        elif mtype == b'N':
+            # NoticeResponse
+            self.buffer.discard_message()
+            return
+
+        raise RuntimeError(
+            f'unexpected message type {chr(mtype)!r}')
 
     cdef parse_error_message(self):
         cdef:

@@ -1,5 +1,5 @@
 #
-# This source file is part of the EdgeDB open source project.
+# This sowurce file is part of the EdgeDB open source project.
 #
 # Copyright 2016-present MagicStack Inc. and the EdgeDB authors.
 #
@@ -38,13 +38,14 @@ from edb.server2.pgproto.pgproto cimport (
 
 import asyncio
 
+DEF FLUSH_BUFFER_AFTER = 100_000
+
 
 @cython.final
 cdef class EdgeConnection:
 
     def __init__(self, server):
         self._con_status = EDGECON_NEW
-        self._state = EDGEPROTO_AUTH
         self._id = server.new_edgecon_id()
         self.server = server
 
@@ -64,8 +65,21 @@ cdef class EdgeConnection:
 
         self._last_anon_compiled = None
 
-    cdef write(self, buf):
-        self._transport.write(memoryview(buf))
+        self._write_buf = None
+
+    cdef write(self, WriteBuffer buf):
+        if self._write_buf is not None:
+            self._write_buf.write_buffer(buf)
+            if self._write_buf.len() > FLUSH_BUFFER_AFTER:
+                self.flush()
+        else:
+            self._write_buf = buf
+
+    cdef flush(self):
+        if self._write_buf is not None and self._write_buf.len():
+            buf = memoryview(self._write_buf)
+            self._write_buf = None
+            self._transport.write(buf)
 
     async def wait_for_message(self):
         if self.buffer.take_message():
@@ -123,11 +137,12 @@ cdef class EdgeConnection:
             buf.write_buffer(msg_buf)
 
             self.write(buf)
+            self.flush()
 
             self.buffer.finish_message()
 
         else:
-            raise TypeError(f'---> {chr(mtype)} <---')
+            self.fallthrough()
 
     #############
 
@@ -140,8 +155,6 @@ cdef class EdgeConnection:
         buf.end_message()
 
         self.write(buf)
-
-        self._state = EDGEPROTO_IDLE
 
     async def parse(self):
         cdef:
@@ -210,7 +223,7 @@ cdef class EdgeConnection:
 
         else:
             raise RuntimeError(
-                f'unsupported "describe" message {chr(rtype)!r}')
+                f'unsupported "describe" message mode {chr(rtype)!r}')
 
     async def execute(self):
         cdef:
@@ -242,6 +255,7 @@ cdef class EdgeConnection:
         buf.write_byte(b'I')
         buf.end_message()
         self.write(buf)
+        self.flush()
 
     async def main(self):
         cdef:
@@ -269,8 +283,7 @@ cdef class EdgeConnection:
                         await self.sync()
 
                     else:
-                        raise RuntimeError(
-                            f'unknown message type {chr(mtype)!r}')
+                        self.fallthrough()
                 finally:
                     self.buffer.finish_message()
 
@@ -289,6 +302,19 @@ cdef class EdgeConnection:
             # XXX instead of aborting:
             # try to send an error message to the client
             self._transport.abort()
+
+    cdef fallthrough(self):
+        cdef:
+            char mtype = self.buffer.get_message_type()
+
+        if mtype == b'H':
+            # Flush
+            self.flush()
+            self.buffer.discard_message()
+            return
+
+        raise RuntimeError(
+            f'unexpected message type {chr(mtype)!r}')
 
     cdef WriteBuffer recode_bind_args(self, bytes bind_args):
         cdef:
@@ -334,7 +360,8 @@ cdef class EdgeConnection:
 
         self._transport = None
 
-        self.loop.create_task(self.backend.close())
+        if self.backend is not None:
+            self.loop.create_task(self.backend.close())
 
     def pause_writing(self):
         pass
