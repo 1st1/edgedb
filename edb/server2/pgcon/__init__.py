@@ -17,4 +17,4 @@
 #
 
 
-from .pgcon import PGProto
+from .pgcon import connect

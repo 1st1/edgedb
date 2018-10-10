@@ -39,6 +39,7 @@ cdef enum PGTransactionStatus:
     PQTRANS_UNKNOWN = 4              # cannot determine status
 
 
+@cython.final
 cdef class PGProto:
 
     cdef:

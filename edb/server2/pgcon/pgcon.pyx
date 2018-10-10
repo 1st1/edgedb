@@ -38,6 +38,20 @@ from edb.server2.edgecon cimport edgecon
 import asyncio
 
 
+DEF DATA_BUFFER_SIZE = 100_000
+
+
+async def connect(addr, dbname):
+    loop = asyncio.get_running_loop()
+
+    _, protocol = await loop.create_unix_connection(
+        lambda: PGProto(dbname, loop), addr)
+
+    await protocol.connect()
+    return protocol
+
+
+@cython.final
 cdef class PGProto:
 
     def __init__(self, dbname, loop):
@@ -122,7 +136,7 @@ cdef class PGProto:
                         buf = WriteBuffer.new()
 
                     self.buffer.redirect_messages(buf, b'D')
-                    if buf.len() > 20000:
+                    if buf.len() > DATA_BUFFER_SIZE:
                         edgecon.write(buf)
                         buf = None
 
@@ -150,7 +164,6 @@ cdef class PGProto:
 
             finally:
                 self.buffer.finish_message()
-
 
     async def connect(self):
         cdef:

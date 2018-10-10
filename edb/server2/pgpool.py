@@ -319,14 +319,7 @@ class BasePool:
 class PGConnectionHolder(BaseConnectionHolder):
 
     async def _connect(self, dbname):
-        loop = self._pool._loop
-
-        self._tr, pr = await loop.create_unix_connection(
-            lambda: pgcon.PGProto(dbname, loop),
-            self._pool._pgaddr)
-
-        await pr.connect()
-        return pr  # XXX
+        return await pgcon.connect(self._pool._pgaddr, dbname)
 
     async def _close(self, con):
         self._tr.abort()

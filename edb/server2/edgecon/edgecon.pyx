@@ -39,6 +39,7 @@ from edb.server2.pgproto.pgproto cimport (
 import asyncio
 
 
+@cython.final
 cdef class EdgeConnection:
 
     def __init__(self, server, loop, cpool, pgpool, dbindex):

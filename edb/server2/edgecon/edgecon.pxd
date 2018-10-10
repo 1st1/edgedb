@@ -47,6 +47,7 @@ cdef enum EdgeProtoState:
     EDGEPROTO_CLOSED = 100
 
 
+@cython.final
 cdef class EdgeConnection:
 
     cdef:
