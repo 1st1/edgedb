@@ -15,3 +15,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
+
+__all__ = (
+    'EdgeDBError',
+)
+
+
+class EdgeDBError(Exception):
+
+    _code = None
+
+    def __init__(self, *args, **kwargs):
+        if type(self) is EdgeDBError:
+            raise RuntimeError(
+                'EdgeDBError is not supposed to be instantiated directly')
+        super().__init__(*args, **kwargs)
+
+    def get_code(self):
+        if self._code is None:
+            raise RuntimeError('EdgeDB exception code is not set')
+        return self._code
