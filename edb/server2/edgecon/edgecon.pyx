@@ -149,7 +149,7 @@ cdef class EdgeConnection:
     #############
 
     async def _compile(self, bytes eql):
-        cdef object compiled
+        cdef pgcon.CompiledQuery compiled
         compiled = await self.backend.compiler.call(
             'compile_edgeql', self.dbview.dbname, self.dbview.dbver, eql)
         self.dbview.cache_compiled_query(eql, compiled)
@@ -158,6 +158,7 @@ cdef class EdgeConnection:
     async def parse(self):
         cdef:
             char mtype
+            pgcon.CompiledQuery compiled
 
         self._last_anon_compiled = None
 
@@ -187,7 +188,7 @@ cdef class EdgeConnection:
 
     #############
 
-    cdef make_describe_response(self, compiled):
+    cdef make_describe_response(self, pgcon.CompiledQuery compiled):
         cdef:
             WriteBuffer msg
 
@@ -234,6 +235,7 @@ cdef class EdgeConnection:
         cdef:
             WriteBuffer bound_args_buf
             bint send_sync
+            pgcon.CompiledQuery compiled
 
         stmt_name = self.buffer.read_utf8()
         bind_args = self.buffer.consume_message()
@@ -274,7 +276,7 @@ cdef class EdgeConnection:
             bytes in_tid
             bytes out_tid
             bytes bound_args
-            object compiled
+            pgcon.CompiledQuery compiled
 
         query = self.buffer.read_null_str()
         in_tid = self.buffer.read_bytes(16)

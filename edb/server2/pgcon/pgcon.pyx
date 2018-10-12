@@ -38,6 +38,9 @@ from edb.server2.edgecon cimport edgecon
 import asyncio
 
 
+include './compiled.pyx'
+
+
 DEF DATA_BUFFER_SIZE = 100_000
 
 

@@ -17,30 +17,16 @@
 #
 
 
-import dataclasses
 import time
 import typing
 
 from edb.server import defines
+from edb.server2.pgcon import CompiledQuery
 
 from . import lru
 
 
 __all__ = ('CompiledQuery', 'DatabaseIndex', 'DatabaseConnectionView')
-
-
-@dataclasses.dataclass(frozen=True)
-class CompiledQuery:
-
-    dbver: int
-
-    out_type_data: bytes = dataclasses.field(repr=False)
-    out_type_id: bytes
-    in_type_data: bytes = dataclasses.field(repr=False)
-    in_type_id: bytes
-
-    sql: bytes
-    sql_hash: bytes = dataclasses.field(repr=False)
 
 
 class Database:

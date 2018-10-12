@@ -31,6 +31,9 @@ from edb.server2.pgproto.pgproto cimport (
 from edb.server2.pgproto.debug cimport PG_DEBUG
 
 
+include './compiled.pxd'
+
+
 cdef enum PGTransactionStatus:
     PQTRANS_IDLE = 0                 # connection idle
     PQTRANS_ACTIVE = 1               # command in progress

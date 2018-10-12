@@ -30,6 +30,8 @@ from edb.server2.pgproto.pgproto cimport (
 
 from edb.server2.pgproto.debug cimport PG_DEBUG
 
+from edb.server2.pgcon cimport pgcon
+
 
 cdef enum EdgeConnectionStatus:
     EDGECON_NEW = 0
@@ -56,15 +58,12 @@ cdef class EdgeConnection:
 
         ReadBuffer buffer
 
-        object pgcon
-        object comp
-
         object _msg_take_waiter
         object _startup_msg_waiter
 
         object _main_task
 
-        object _last_anon_compiled
+        pgcon.CompiledQuery _last_anon_compiled
         WriteBuffer _write_buf
 
     cdef write(self, WriteBuffer buf)
@@ -76,4 +75,4 @@ cdef class EdgeConnection:
 
     cdef WriteBuffer recode_bind_args(self, bytes bind_args)
 
-    cdef make_describe_response(self, compiled)
+    cdef make_describe_response(self, pgcon.CompiledQuery compiled)
