@@ -35,6 +35,7 @@ from edb.server.pgsql import intromech
 from edb.lang import edgeql
 from edb.lang.edgeql import compiler as ql_compiler
 from edb.lang.schema import error as s_err
+from edb.lang.schema import objects as s_obj
 from edb.lang.schema import types as s_types
 
 from . import dbstate
@@ -75,6 +76,9 @@ class QueryResultsTypeSerializer:
         raise s_err.SchemaError(msg, details=details)
 
     def _get_collection_type_id(self, coll_type, subtypes, element_names=None):
+        if coll_type == 'tuple' and not subtypes:
+            return s_obj.get_known_type_id('empty-tuple')
+
         subtypes = (f"{st}" for st in subtypes)
         string_id = f'{coll_type}\x00{":".join(subtypes)}'
         if element_names:

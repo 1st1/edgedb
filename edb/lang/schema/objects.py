@@ -19,8 +19,6 @@
 
 import collections.abc
 import itertools
-import pathlib
-import re
 import uuid
 
 from edb.lang.common import nlang
@@ -32,41 +30,11 @@ from edb.lang.common import struct, typed
 
 from . import error as s_err
 from . import name as sn
-
-
-_TYPE_IDS = None
-
-
-def _load_type_ids():
-    import edb.api
-
-    types = pathlib.Path(edb.api.__path__[0]) / 'types.txt'
-    typeids = {}
-
-    with open(types, 'rt') as f:
-        for line in f:
-            if line.startswith('#'):
-                continue
-            line = line.strip()
-            if not line:
-                continue
-            parts = re.split(r'\s+', line)
-            id, name = parts[:2]
-            typeids[name] = uuid.UUID(id)
-
-    return typeids
-
-
-def get_type_ids():
-    global _TYPE_IDS
-    if _TYPE_IDS is None:
-        _TYPE_IDS = _load_type_ids()
-    return _TYPE_IDS
+from . import _types
 
 
 def get_known_type_id(typename):
-    ids = get_type_ids()
-    return ids.get(typename)
+    return _types.TYPE_IDS.get(typename)
 
 
 def is_named_class(scls):

@@ -18,6 +18,7 @@
 
 
 from .edb import edbcommands  # noqa
-from . import excgen  # noqa
+from . import gen_errors  # noqa
+from . import gen_types  # noqa
 from . import inittestdb  # noqa
 from . import test  # noqa
