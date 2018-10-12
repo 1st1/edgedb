@@ -189,30 +189,23 @@ cdef class EdgeConnection:
         if rtype == b'T':
             # describe "type id"
             stmt_name = self.buffer.read_utf8()
-            type_num = self.buffer.read_int16()
 
             msg = WriteBuffer.new_message(b'T')
 
-            for i in range(type_num):
-                type_id = self.buffer.read_bytes(16)
+            if stmt_name:
+                raise RuntimeError('named statements are not yet supported')
+            else:
+                if self._last_anon_compiled is None:
+                    raise RuntimeError(
+                        'no prepared anonymous statement found')
 
-                if stmt_name:
-                    raise RuntimeError('named statements are not yet supported')
-                else:
-                    if self._last_anon_compiled is None:
-                        raise RuntimeError(
-                            'no prepared anonymous statement found')
+                in_data = self._last_anon_compiled.in_type_data
+                msg.write_int16(len(in_data))
+                msg.write_bytes(in_data)
 
-                    if self._last_anon_compiled.out_type_id == type_id:
-                        type_data = self._last_anon_compiled.out_type_data
-                    elif self._last_anon_compiled.in_type_id == type_id:
-                        type_data = self._last_anon_compiled.in_type_data
-                    else:
-                        raise RuntimeError(
-                            f'no spec available for type id {type_id}')
-
-                    msg.write_int16(len(type_data))
-                    msg.write_bytes(type_data)
+                out_data = self._last_anon_compiled.out_type_data
+                msg.write_int16(len(out_data))
+                msg.write_bytes(out_data)
 
             msg.end_message()
             self.write(msg)
