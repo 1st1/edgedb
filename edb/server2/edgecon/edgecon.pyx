@@ -172,8 +172,8 @@ cdef class EdgeConnection:
         self._last_anon_compiled = compiled
 
         buf = WriteBuffer.new_message(b'1')  # ParseComplete
-        buf.write_bytes(compiled.out_type_id)
         buf.write_bytes(compiled.in_type_id)
+        buf.write_bytes(compiled.out_type_id)
         buf.end_message()
 
         self.write(buf)
