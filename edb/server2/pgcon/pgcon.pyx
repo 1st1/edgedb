@@ -98,11 +98,13 @@ cdef class PGProto:
             else:
                 self.fallthrough()
 
-    async def execute_anonymous(self,
-                                edgecon.EdgeConnection edgecon,
-                                bytes query,
-                                WriteBuffer bind_data,
-                                bint send_sync):
+    async def parse_execute(self,
+                            bint parse,
+                            bint execute,
+                            bytes query,
+                            edgecon.EdgeConnection edgecon,
+                            WriteBuffer bind_data,
+                            bint send_sync):
 
         cdef:
             WriteBuffer packet
@@ -111,24 +113,31 @@ cdef class PGProto:
         if not self.connected:
             raise RuntimeError('not connected')
 
+        if not parse and not execute:
+            raise RuntimeError('invalid parse/execute call')
+
         packet = WriteBuffer.new()
 
-        buf = WriteBuffer.new_message(b'P')
-        buf.write_bytestring(b'')  # statement name
-        buf.write_bytestring(query)
-        buf.write_int16(0)
-        packet.write_buffer(buf.end_message())
+        if parse:
+            buf = WriteBuffer.new_message(b'P')
+            buf.write_bytestring(b'')  # statement name
+            buf.write_bytestring(query)
+            buf.write_int16(0)
+            packet.write_buffer(buf.end_message())
 
-        buf = WriteBuffer.new_message(b'B')
-        buf.write_bytestring(b'')  # portal name
-        buf.write_bytestring(b'')  # statement name
-        buf.write_buffer(bind_data)
-        packet.write_buffer(buf.end_message())
+        if execute:
+            assert bind_data is not None
 
-        buf = WriteBuffer.new_message(b'E')
-        buf.write_bytestring(b'')  # portal name
-        buf.write_int32(0)  # limit: number of rows to return; 0 - all
-        packet.write_buffer(buf.end_message())
+            buf = WriteBuffer.new_message(b'B')
+            buf.write_bytestring(b'')  # portal name
+            buf.write_bytestring(b'')  # statement name
+            buf.write_buffer(bind_data)
+            packet.write_buffer(buf.end_message())
+
+            buf = WriteBuffer.new_message(b'E')
+            buf.write_bytestring(b'')  # portal name
+            buf.write_int32(0)  # limit: number of rows to return; 0 - all
+            packet.write_buffer(buf.end_message())
 
         if send_sync:
             packet.write_bytes(SYNC_MESSAGE)
@@ -144,20 +153,7 @@ cdef class PGProto:
                 mtype = self.buffer.get_message_type()
 
                 try:
-                    if mtype == b'1':
-                        # ParseComplete
-                        self.buffer.discard_message()
-
-                    elif mtype == b'E':  ## result
-                        # ErrorResponse
-                        er = self.parse_error_message()
-                        raise RuntimeError(str(er))
-
-                    elif mtype == b'n':
-                        # NoData
-                        self.buffer.discard_message()
-
-                    elif mtype == b'D':
+                    if mtype == b'D' and execute:
                         # DataRow
                         if buf is None:
                             buf = WriteBuffer.new()
@@ -167,12 +163,7 @@ cdef class PGProto:
                             edgecon.write(buf)
                             buf = None
 
-                    elif mtype == b's':  ## result
-                        # PortalSuspended
-                        self.buffer.discard_message()
-                        return
-
-                    elif mtype == b'C':  ## result
+                    elif mtype == b'C' and execute:  ## result
                         # CommandComplete
                         self.buffer.discard_message()
                         if buf is not None:
@@ -180,11 +171,31 @@ cdef class PGProto:
                             buf = None
                         return
 
-                    elif mtype == b'2':
+                    elif mtype == b'1' and parse:
+                        # ParseComplete
+                        self.buffer.discard_message()
+                        if not execute:
+                            return
+
+                    elif mtype == b'E':  ## result
+                        # ErrorResponse
+                        er = self.parse_error_message()
+                        raise RuntimeError(str(er))
+
+                    elif mtype == b'n' and execute:
+                        # NoData
+                        self.buffer.discard_message()
+
+                    elif mtype == b's' and execute:  ## result
+                        # PortalSuspended
+                        self.buffer.discard_message()
+                        return
+
+                    elif mtype == b'2' and execute:
                         # BindComplete
                         self.buffer.discard_message()
 
-                    elif mtype == b'I':  ## result
+                    elif mtype == b'I' and execute:  ## result
                         # EmptyQueryResponse
                         self.buffer.discard_message()
                         return
@@ -282,6 +293,9 @@ cdef class PGProto:
                 return
             else:
                 if not self.parse_notification():
+                    if PG_DEBUG:
+                        print(f'PGCon.wait_for_sync: discarding '
+                              f'{chr(mtype)!r} message')
                     self.buffer.discard_message()
 
     cdef write(self, buf):

@@ -374,6 +374,7 @@ class Compiler:
     async def connect(self, dbname, dbver):
         await self._get_database(dbname, dbver)
 
-    async def compile_edgeql(self, dbname, dbver, eql):
+    async def compile_edgeql(self, dbname, dbver, eql: bytes):
+        eql = eql.decode()
         db = await self._get_database(dbname, dbver)
         return self._compile(db, eql)

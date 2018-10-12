@@ -75,3 +75,5 @@ cdef class EdgeConnection:
     cdef pgcon_last_sync_status(self)
 
     cdef WriteBuffer recode_bind_args(self, bytes bind_args)
+
+    cdef make_describe_response(self, compiled)

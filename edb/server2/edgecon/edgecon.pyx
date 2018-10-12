@@ -148,6 +148,13 @@ cdef class EdgeConnection:
 
     #############
 
+    async def _compile(self, bytes eql):
+        cdef object compiled
+        compiled = await self.backend.compiler.call(
+            'compile_edgeql', self.dbview.dbname, self.dbview.dbver, eql)
+        self.dbview.cache_compiled_query(eql, compiled)
+        return compiled
+
     async def parse(self):
         cdef:
             char mtype
@@ -158,16 +165,16 @@ cdef class EdgeConnection:
         if stmt_name:
             raise RuntimeError('named statements are not yet supported')
 
-        eql = self.buffer.read_utf8()
+        eql = self.buffer.read_null_str()
         if not eql:
             raise RuntimeError('empty query')
 
         compiled = self.dbview.lookup_compiled_query(eql)
         if compiled is None:
-            compiled = await self.backend.compiler.call(
-                'compile_edgeql', self.dbview.dbname, self.dbview.dbver, eql)
+            compiled = await self._compile(eql)
 
-            self.dbview.cache_compiled_query(eql, compiled)
+        await self.backend.pgcon.parse_execute(
+            1, 0, compiled.sql, self, None, False)
 
         self._last_anon_compiled = compiled
 
@@ -180,6 +187,25 @@ cdef class EdgeConnection:
 
     #############
 
+    cdef make_describe_response(self, compiled):
+        cdef:
+            WriteBuffer msg
+
+        msg = WriteBuffer.new_message(b'T')
+
+        in_data = compiled.in_type_data
+        msg.write_bytes(compiled.in_type_id)
+        msg.write_int16(len(in_data))
+        msg.write_bytes(in_data)
+
+        out_data = compiled.out_type_data
+        msg.write_bytes(compiled.out_type_id)
+        msg.write_int16(len(out_data))
+        msg.write_bytes(out_data)
+
+        msg.end_message()
+        return msg
+
     async def describe(self):
         cdef:
             char rtype
@@ -190,8 +216,6 @@ cdef class EdgeConnection:
             # describe "type id"
             stmt_name = self.buffer.read_utf8()
 
-            msg = WriteBuffer.new_message(b'T')
-
             if stmt_name:
                 raise RuntimeError('named statements are not yet supported')
             else:
@@ -199,16 +223,8 @@ cdef class EdgeConnection:
                     raise RuntimeError(
                         'no prepared anonymous statement found')
 
-                in_data = self._last_anon_compiled.in_type_data
-                msg.write_int16(len(in_data))
-                msg.write_bytes(in_data)
-
-                out_data = self._last_anon_compiled.out_type_data
-                msg.write_int16(len(out_data))
-                msg.write_bytes(out_data)
-
-            msg.end_message()
-            self.write(msg)
+                msg = self.make_describe_response(self._last_anon_compiled)
+                self.write(msg)
 
         else:
             raise RuntimeError(
@@ -223,13 +239,6 @@ cdef class EdgeConnection:
         bind_args = self.buffer.consume_message()
         compiled = None
 
-        send_sync = False
-        if self.buffer.take_message_type(b'S'):
-            # A "Sync" message follows this "Execute" message;
-            # send it right away.
-            send_sync = True
-            self.buffer.finish_message()
-
         if stmt_name:
             raise RuntimeError('named statements are not yet supported')
         else:
@@ -240,8 +249,16 @@ cdef class EdgeConnection:
 
         bound_args_buf = self.recode_bind_args(bind_args)
 
-        await self.backend.pgcon.execute_anonymous(
-            self, compiled.sql, bound_args_buf,
+        send_sync = False
+        if self.buffer.take_message_type(b'S'):
+            # A "Sync" message follows this "Execute" message;
+            # send it right away.
+            send_sync = True
+            self.buffer.finish_message()
+
+        await self.backend.pgcon.parse_execute(
+            0, 1, compiled.sql,
+            self, bound_args_buf,
             send_sync)
 
         self.write(WriteBuffer.new_message(b'C').end_message())
@@ -249,6 +266,82 @@ cdef class EdgeConnection:
         if send_sync:
             self.write(self.pgcon_last_sync_status())
             self.flush()
+
+    async def opportunistic_execute(self):
+        cdef:
+            WriteBuffer bound_args_buf
+            bint send_sync
+            bytes in_tid
+            bytes out_tid
+            bytes bound_args
+            object compiled
+
+        query = self.buffer.read_null_str()
+        in_tid = self.buffer.read_bytes(16)
+        out_tid = self.buffer.read_bytes(16)
+        bound_args = self.buffer.consume_message()
+
+        if not query:
+            raise RuntimeError('empty query')
+
+        compiled = self.dbview.lookup_compiled_query(query)
+        if (compiled is None or
+                compiled.in_type_id != in_tid or
+                compiled.out_type_id != out_tid):
+
+            # Either the query is no longer compiled or the client has
+            # outdated information about type specs.
+
+            # Check if we need to compile this query.
+            if compiled is None:
+                compiled = await self._compile(query)
+
+            send_sync = False
+            if self.buffer.take_message_type(b'S'):
+                # A "Sync" message follows this "Execute" message;
+                # send it right away.
+                send_sync = True
+                self.buffer.finish_message()
+
+            await self.backend.pgcon.parse_execute(
+                1, 0, compiled.sql, self, None, False)
+
+            self.write(self.make_describe_response(compiled))
+            if send_sync:
+                self.write(self.pgcon_last_sync_status())
+                self.flush()
+
+            while True:
+                if not self.buffer.take_message():
+                    await self.wait_for_message()
+                mtype = self.buffer.get_message_type()
+
+                try:
+                    if mtype == b'E':
+                        await self.execute()
+                        return
+                    else:
+                        self.fallthrough()
+                finally:
+                    self.buffer.finish_message()
+
+        else:
+            send_sync = False
+            if self.buffer.take_message_type(b'S'):
+                # A "Sync" message follows this "Execute" message;
+                # send it right away.
+                send_sync = True
+                self.buffer.finish_message()
+
+            await self.backend.pgcon.parse_execute(
+                1, 1,
+                compiled.sql, self,
+                self.recode_bind_args(bound_args),
+                send_sync)
+
+            if send_sync:
+                self.write(self.pgcon_last_sync_status())
+                self.flush()
 
     async def sync(self):
         cdef:
@@ -280,6 +373,9 @@ cdef class EdgeConnection:
 
                     elif mtype == b'E':
                         await self.execute()
+
+                    elif mtype == b'O':
+                        await self.opportunistic_execute()
 
                     elif mtype == b'S':
                         await self.sync()

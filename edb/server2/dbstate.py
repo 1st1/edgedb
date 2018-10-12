@@ -46,7 +46,7 @@ class CompiledQuery:
 class Database:
 
     # Global LRU cache of compiled anonymous queries
-    _eql_to_compiled: typing.Mapping[str, CompiledQuery]
+    _eql_to_compiled: typing.Mapping[bytes, CompiledQuery]
 
     def __init__(self, name):
         self._name = name
@@ -62,7 +62,7 @@ class Database:
     def _invalidate_caches(self):
         self._eql_to_compiled.clear()
 
-    def _cache_compiled_query(self, eql: str, compiled: CompiledQuery):
+    def _cache_compiled_query(self, eql: bytes, compiled: CompiledQuery):
         existing = self._eql_to_compiled.get(eql)
         if existing is not None and existing.dbver > compiled.dbver:
             # We already have a cached query for a more recent DB version.
@@ -76,7 +76,7 @@ class Database:
 
 class DatabaseConnectionView:
 
-    _eql_to_compiled: typing.Mapping[str, CompiledQuery]
+    _eql_to_compiled: typing.Mapping[bytes, CompiledQuery]
 
     def __init__(self, db, *, user):
         self._db = db
@@ -111,7 +111,7 @@ class DatabaseConnectionView:
         return self._db._name
 
     def lookup_compiled_query(
-            self, eql: str) -> typing.Optional[CompiledQuery]:
+            self, eql: bytes) -> typing.Optional[CompiledQuery]:
 
         compiled: CompiledQuery
 
@@ -124,8 +124,7 @@ class DatabaseConnectionView:
 
         return compiled
 
-
-    def cache_compiled_query(self, eql: str, compiled: CompiledQuery):
+    def cache_compiled_query(self, eql: bytes, compiled: CompiledQuery):
         if self._in_tx_with_ddl:
             self._eql_to_compiled[eql] = compiled
         else:
@@ -185,7 +184,7 @@ class DatabaseIndex:
     def __init__(self):
         self._dbs = {}
 
-    def new_view(self, dbname, *, user) -> DatabaseConnectionView:
+    def new_view(self, dbname: str, *, user: str) -> DatabaseConnectionView:
         try:
             db = self._dbs[dbname]
         except KeyError:
