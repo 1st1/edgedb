@@ -174,6 +174,7 @@ cdef class PGProto:
 
                     elif mtype == b'C':  ## result
                         # CommandComplete
+                        self.buffer.discard_message()
                         if buf is not None:
                             edgecon.write(buf)
                             buf = None
