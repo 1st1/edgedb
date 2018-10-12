@@ -79,7 +79,7 @@ cdef class EdgeConnection:
 
     cdef flush(self):
         if self._write_buf is not None and self._write_buf.len():
-            buf = memoryview(self._write_buf)
+            buf = self._write_buf
             self._write_buf = None
             self._transport.write(buf)
 

@@ -59,7 +59,7 @@ cdef class PGProto:
         readonly int32_t backend_pid
         readonly int32_t backend_secret
 
-    cdef write(self, buf)
+    cdef write(self, WriteBuffer buf)
     cdef parse_error_message(self)
     cdef parse_sync_message(self)
 

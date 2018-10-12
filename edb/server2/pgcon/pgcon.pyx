@@ -298,8 +298,8 @@ cdef class PGProto:
                               f'{chr(mtype)!r} message')
                     self.buffer.discard_message()
 
-    cdef write(self, buf):
-        self.transport.write(memoryview(buf))
+    cdef write(self, WriteBuffer buf):
+        self.transport.write(buf)
 
     cdef fallthrough(self):
         if self.parse_notification():
