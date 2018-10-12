@@ -39,9 +39,11 @@ import asyncio
 
 
 include './compiled.pyx'
+include './lru.pyx'
 
 
 DEF DATA_BUFFER_SIZE = 100_000
+DEF PREP_STMTS_CACHE = 100
 
 
 async def connect(addr, dbname):
@@ -66,6 +68,8 @@ cdef class PGProto:
 
         self.transport = None
         self.msg_waiter = None
+
+        self.prep_stmts = StatementsCache(maxsize=PREP_STMTS_CACHE)
 
         self.connected_fut = loop.create_future()
         self.connected = False
@@ -104,14 +108,17 @@ cdef class PGProto:
     async def parse_execute(self,
                             bint parse,
                             bint execute,
-                            bytes query,
+                            CompiledQuery query,
                             edgecon.EdgeConnection edgecon,
                             WriteBuffer bind_data,
-                            bint send_sync):
+                            bint send_sync,
+                            bint use_prep_stmt):
 
         cdef:
             WriteBuffer packet
             WriteBuffer buf
+            bytes stmt_name
+            bint store_stmt = 0
 
         if not self.connected:
             raise RuntimeError('not connected')
@@ -121,10 +128,33 @@ cdef class PGProto:
 
         packet = WriteBuffer.new()
 
+        if use_prep_stmt:
+            assert parse and execute
+
+            while self.prep_stmts.needs_cleanup():
+                stmt_name_to_clean = self.prep_stmts.cleanup_one()
+                packet.write_buffer(
+                    self.make_clean_stmt_message(stmt_name_to_clean))
+
+            stmt_name = query.sql_hash
+            if stmt_name in self.prep_stmts:
+                if self.prep_stmts[stmt_name] == query.dbver:
+                    parse = 0
+                else:
+                    packet.write_buffer(
+                        self.make_clean_stmt_message(stmt_name))
+                    del self.prep_stmts[stmt_name]
+                    store_stmt = 1
+            else:
+                store_stmt = 1
+
+        else:
+            stmt_name = b''
+
         if parse:
             buf = WriteBuffer.new_message(b'P')
-            buf.write_bytestring(b'')  # statement name
-            buf.write_bytestring(query)
+            buf.write_bytestring(stmt_name)
+            buf.write_bytestring(query.sql)
             buf.write_int16(0)
             packet.write_buffer(buf.end_message())
 
@@ -133,7 +163,7 @@ cdef class PGProto:
 
             buf = WriteBuffer.new_message(b'B')
             buf.write_bytestring(b'')  # portal name
-            buf.write_bytestring(b'')  # statement name
+            buf.write_bytestring(stmt_name)  # statement name
             buf.write_buffer(bind_data)
             packet.write_buffer(buf.end_message())
 
@@ -177,6 +207,8 @@ cdef class PGProto:
                     elif mtype == b'1' and parse:
                         # ParseComplete
                         self.buffer.discard_message()
+                        if store_stmt:
+                            self.prep_stmts[stmt_name] = query.dbver
                         if not execute:
                             return
 
@@ -202,6 +234,10 @@ cdef class PGProto:
                         # EmptyQueryResponse
                         self.buffer.discard_message()
                         return
+
+                    elif mtype == b'3':
+                        # CloseComplete
+                        self.buffer.discard_message()
 
                     else:
                         self.fallthrough()
@@ -370,6 +406,13 @@ cdef class PGProto:
             self.xact_status = PQTRANS_UNKNOWN
 
         self.buffer.finish_message()
+
+    cdef make_clean_stmt_message(self, bytes stmt_name):
+        cdef WriteBuffer buf
+        buf = WriteBuffer.new_message(b'C')
+        buf.write_byte(b'S')
+        buf.write_bytestring(stmt_name)
+        return buf.end_message()
 
     async def wait_for_message(self):
         if self.buffer.take_message():

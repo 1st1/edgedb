@@ -32,6 +32,7 @@ from edb.server2.pgproto.debug cimport PG_DEBUG
 
 
 include './compiled.pxd'
+include './lru.pxd'
 
 
 cdef enum PGTransactionStatus:
@@ -62,9 +63,14 @@ cdef class PGProto:
         readonly int32_t backend_pid
         readonly int32_t backend_secret
 
+        StatementsCache prep_stmts
+
     cdef write(self, WriteBuffer buf)
+
     cdef parse_error_message(self)
     cdef parse_sync_message(self)
 
     cdef parse_notification(self)
     cdef fallthrough(self)
+
+    cdef make_clean_stmt_message(self, bytes stmt_name)

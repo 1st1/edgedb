@@ -175,7 +175,7 @@ cdef class EdgeConnection:
             compiled = await self._compile(eql)
 
         await self.backend.pgcon.parse_execute(
-            1, 0, compiled.sql, self, None, False)
+            1, 0, compiled, self, None, 0, 0)
 
         self._last_anon_compiled = compiled
 
@@ -259,9 +259,9 @@ cdef class EdgeConnection:
             self.buffer.finish_message()
 
         await self.backend.pgcon.parse_execute(
-            0, 1, compiled.sql,
+            0, 1, compiled,
             self, bound_args_buf,
-            send_sync)
+            send_sync, 0)
 
         self.write(WriteBuffer.new_message(b'C').end_message())
 
@@ -306,7 +306,7 @@ cdef class EdgeConnection:
                 self.buffer.finish_message()
 
             await self.backend.pgcon.parse_execute(
-                1, 0, compiled.sql, self, None, False)
+                1, 0, compiled, self, None, 0, 0)
 
             self.write(self.make_describe_response(compiled))
             if send_sync:
@@ -337,9 +337,9 @@ cdef class EdgeConnection:
 
             await self.backend.pgcon.parse_execute(
                 1, 1,
-                compiled.sql, self,
+                compiled, self,
                 self.recode_bind_args(bound_args),
-                send_sync)
+                send_sync, 1)
 
             if send_sync:
                 self.write(self.pgcon_last_sync_status())
