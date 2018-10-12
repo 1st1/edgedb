@@ -29,5 +29,3 @@ cdef class CompiledQuery:
         readonly bytes in_type_id
         readonly bytes sql
         readonly bytes sql_hash
-
-        Py_hash_t _hash

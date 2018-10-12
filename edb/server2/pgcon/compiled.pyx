@@ -36,7 +36,6 @@ cdef class CompiledQuery:
         self.in_type_id = in_type_id
         self.sql = sql
         self.sql_hash = sql_hash
-        self._hash = -1
 
     def __repr__(self):
         return (
