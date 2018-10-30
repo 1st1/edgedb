@@ -17,8 +17,7 @@
 #
 
 
-from .edb import edbcommands  # noqa
-from . import gen_errors  # noqa
-from . import gen_types  # noqa
-from . import inittestdb  # noqa
-from . import test  # noqa
+__all__ = 'create_pool',
+
+
+from .pool import create_pool, create_manager  # NoQA

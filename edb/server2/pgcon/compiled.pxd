@@ -15,3 +15,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
+
+@cython.final
+@cython.no_gc_clear
+@cython.auto_pickle(True)
+cdef class CompiledQuery:
+
+    cdef:
+        readonly uint64_t dbver
+        readonly bytes out_type_data
+        readonly bytes out_type_id
+        readonly bytes in_type_data
+        readonly bytes in_type_id
+        readonly bytes sql
+        readonly bytes sql_hash

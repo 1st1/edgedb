@@ -31,6 +31,7 @@ from edb.lang.ir import ast as irast
 from edb.lang.schema import functions as s_func
 from edb.lang.schema import name as s_name
 from edb.lang.schema import nodes as s_nodes
+from edb.lang.schema import objects as s_obj
 from edb.lang.schema import pointers as s_pointers
 from edb.lang.schema import schema as s_schema
 from edb.lang.schema import types as s_types
@@ -192,6 +193,10 @@ class ContextLevel(compiler.ContextLevel):
     empty_result_type_hint: s_types.Type
     """Type to use if the statement result expression is an empty set ctor."""
 
+    query_parameters: typing.Dict[str, s_obj.Object]
+    """A mapping of query parameters to their types.  Gets populated during
+    the compilation."""
+
     def __init__(self, prevlevel, mode):
         self.mode = mode
 
@@ -240,6 +245,8 @@ class ContextLevel(compiler.ContextLevel):
             self.implicit_id_in_shapes = False
             self.empty_result_type_hint = None
 
+            self.query_parameters = {}
+
         else:
             self.schema = prevlevel.schema
             self.derived_target_module = prevlevel.derived_target_module
@@ -275,6 +282,8 @@ class ContextLevel(compiler.ContextLevel):
             self.toplevel_stmt = prevlevel.toplevel_stmt
             self.implicit_id_in_shapes = prevlevel.implicit_id_in_shapes
             self.empty_result_type_hint = prevlevel.empty_result_type_hint
+
+            self.query_parameters = prevlevel.query_parameters
 
             if mode == ContextSwitchMode.SUBQUERY:
                 self.anchors = prevlevel.anchors.copy()

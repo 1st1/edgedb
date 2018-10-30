@@ -108,7 +108,7 @@ def _compile_set_impl(
 @dispatch.compile.register(irast.Parameter)
 def compile_Parameter(
         expr: irast.Base, *, ctx: context.CompilerContextLevel) -> pgast.Base:
-    if expr.name.isnumeric():
+    if expr.name.isdecimal():
         index = int(expr.name) + 1
         result = pgast.ParamRef(number=index)
     else:

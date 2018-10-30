@@ -105,6 +105,7 @@ def fini_expression(
 
     result = irast.Statement(
         expr=ir,
+        params=ctx.query_parameters,
         views=ctx.view_nodes,
         source_map=ctx.source_map,
         scope_tree=ctx.path_scope,

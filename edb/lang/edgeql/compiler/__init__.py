@@ -111,6 +111,18 @@ def compile_ast_to_ir(tree,
     ir_set = dispatch.compile(tree, ctx=ctx)
     ir_expr = stmtctx.fini_expression(ir_set, ctx=ctx)
 
+    if ctx.query_parameters:
+        first_argname = next(iter(ctx.query_parameters))
+        if first_argname.isdecimal():
+            args_decnames = {int(arg) for arg in ctx.query_parameters}
+            args_tpl = set(range(len(ctx.query_parameters)))
+            if args_decnames != args_tpl:
+                missing_args = args_tpl - args_decnames
+                missing_args_repr = ', '.join(f'${a}' for a in missing_args)
+                raise ql_errors.EdgeQLError(
+                    f'missing {missing_args_repr} positional argument'
+                    f'{"s" if len(missing_args) > 1 else ""}')
+
     if debug.flags.edgeql_compile:
         debug.header('Scope Tree')
         if ctx.path_scope is not None:

@@ -17,8 +17,22 @@
 #
 
 
-from .edb import edbcommands  # noqa
-from . import gen_errors  # noqa
-from . import gen_types  # noqa
-from . import inittestdb  # noqa
-from . import test  # noqa
+__all__ = (
+    'EdgeDBError',
+)
+
+
+class EdgeDBError(Exception):
+
+    _code = None
+
+    def __init__(self, *args, **kwargs):
+        if type(self) is EdgeDBError:
+            raise RuntimeError(
+                'EdgeDBError is not supposed to be instantiated directly')
+        super().__init__(*args, **kwargs)
+
+    def get_code(self):
+        if self._code is None:
+            raise RuntimeError('EdgeDB exception code is not set')
+        return self._code

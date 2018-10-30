@@ -146,6 +146,15 @@ class Type(so.NamedObject, derivable.DerivableObjectBase):
             self, other: 'Type', schema) -> typing.Optional['Type']:
         return
 
+    def explicitly_castable_to(self, other: 'Type', schema) -> bool:
+        if self.implicitly_castable_to(other, schema):
+            return True
+
+        if self.assignment_castable_to(other, schema):
+            return True
+
+        return False
+
     def material_type(self):
         # When self is a view, this returns the material type
         # under the view.
