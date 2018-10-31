@@ -41,9 +41,10 @@ RUNTIME_DEPS = [
     'pygments',
     'setproctitle',
     'typing_inspect~=0.3.1',
+    'uvloop~=0.11.3',
 ]
 
-CYTHON_DEPENDENCY = 'Cython==0.28.3'
+CYTHON_DEPENDENCY = 'Cython==0.29.0'
 
 BUILD_DEPS = [
     CYTHON_DEPENDENCY,
