@@ -40,6 +40,9 @@ from edb.server2.pgcon cimport pgcon
 
 import asyncio
 
+from edb import errors
+
+
 DEF FLUSH_BUFFER_AFTER = 100_000
 
 
@@ -402,6 +405,15 @@ cdef class EdgeConnection:
             # XXX instead of aborting:
             # try to send an error message to the client
             self._transport.abort()
+
+    def serialize_error(self, exc):
+        exc_code = None
+
+        fields = {}
+        if isinstance(exc, errors.EdgeDBError):
+            if exc.get_code():
+                exc_code = exc.get_code()
+
 
     cdef pgcon_last_sync_status(self):
         cdef:
