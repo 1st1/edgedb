@@ -69,7 +69,9 @@ cdef class EdgeConnection:
     cdef write(self, WriteBuffer buf)
     cdef flush(self)
 
-    cdef fallthrough(self)
+    cdef write_error(self, exc)
+
+    cdef fallthrough(self, bint ignore_unhandled)
 
     cdef pgcon_last_sync_status(self)
 

@@ -32,7 +32,8 @@ class EdgeDBError(Exception):
                 'EdgeDBError is not supposed to be instantiated directly')
         super().__init__(*args, **kwargs)
 
-    def get_code(self):
-        if self._code is None:
+    @classmethod
+    def get_code(cls):
+        if cls._code is None:
             raise RuntimeError('EdgeDB exception code is not set')
-        return self._code
+        return cls._code

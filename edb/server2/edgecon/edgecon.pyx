@@ -73,6 +73,7 @@ cdef class EdgeConnection:
         self._write_buf = None
 
     cdef write(self, WriteBuffer buf):
+        # One rule for this method: don't write partial messages.
         if self._write_buf is not None:
             self._write_buf.write_buffer(buf)
             if self._write_buf.len() >= FLUSH_BUFFER_AFTER:
@@ -106,8 +107,7 @@ cdef class EdgeConnection:
         hi = self.buffer.read_int16()
         lo = self.buffer.read_int16()
         if hi != 1 or lo != 0:
-            self._transport.close()
-            raise RuntimeError('wrong proto')
+            raise errors.UnsupportedProtocolVersionError
 
         self._con_status = EDGECON_STARTED
 
@@ -147,7 +147,7 @@ cdef class EdgeConnection:
             self.buffer.finish_message()
 
         else:
-            self.fallthrough()
+            self.fallthrough(False)
 
     #############
 
@@ -163,31 +163,38 @@ cdef class EdgeConnection:
             char mtype
             pgcon.CompiledQuery compiled
 
-        self._last_anon_compiled = None
+        try:
 
-        stmt_name = self.buffer.read_utf8()
-        if stmt_name:
-            raise RuntimeError('named statements are not yet supported')
+            self._last_anon_compiled = None
 
-        eql = self.buffer.read_null_str()
-        if not eql:
-            raise RuntimeError('empty query')
+            stmt_name = self.buffer.read_utf8()
+            if stmt_name:
+                raise errors.UnsupportedFeatureError(
+                    'prepared statements are not yet supported')
 
-        compiled = self.dbview.lookup_compiled_query(eql)
-        if compiled is None:
-            compiled = await self._compile(eql)
+            eql = self.buffer.read_null_str()
+            if not eql:
+                raise errors.BinaryProtocolError('empty query')
 
-        await self.backend.pgcon.parse_execute(
-            1, 0, compiled, self, None, 0, 0)
+            compiled = self.dbview.lookup_compiled_query(eql)
+            if compiled is None:
+                compiled = await self._compile(eql)
 
-        self._last_anon_compiled = compiled
+            await self.backend.pgcon.parse_execute(
+                1, 0, compiled, self, None, 0, 0)
 
-        buf = WriteBuffer.new_message(b'1')  # ParseComplete
-        buf.write_bytes(compiled.in_type_id)
-        buf.write_bytes(compiled.out_type_id)
-        buf.end_message()
+            self._last_anon_compiled = compiled
 
-        self.write(buf)
+            buf = WriteBuffer.new_message(b'1')  # ParseComplete
+            buf.write_bytes(compiled.in_type_id)
+            buf.write_bytes(compiled.out_type_id)
+            buf.end_message()
+
+            self.write(buf)
+
+        except Exception as ex:
+            # Write error back immediately
+            self.write_error(ex)
 
     #############
 
@@ -215,24 +222,30 @@ cdef class EdgeConnection:
             char rtype
             WriteBuffer msg
 
-        rtype = self.buffer.read_byte()
-        if rtype == b'T':
-            # describe "type id"
-            stmt_name = self.buffer.read_utf8()
+        try:
+            rtype = self.buffer.read_byte()
+            if rtype == b'T':
+                # describe "type id"
+                stmt_name = self.buffer.read_utf8()
 
-            if stmt_name:
-                raise RuntimeError('named statements are not yet supported')
+                if stmt_name:
+                    raise errors.UnsupportedFeatureError(
+                        'prepared statements are not yet supported')
+                else:
+                    if self._last_anon_compiled is None:
+                        raise errors.BinaryProtocolError(
+                            'no prepared anonymous statement found')
+
+                    msg = self.make_describe_response(self._last_anon_compiled)
+                    self.write(msg)
+
             else:
-                if self._last_anon_compiled is None:
-                    raise RuntimeError(
-                        'no prepared anonymous statement found')
+                raise errors.BinaryProtocolError(
+                    f'unsupported "describe" message mode {chr(rtype)!r}')
 
-                msg = self.make_describe_response(self._last_anon_compiled)
-                self.write(msg)
-
-        else:
-            raise RuntimeError(
-                f'unsupported "describe" message mode {chr(rtype)!r}')
+        except Exception as ex:
+            # Write error back immediately
+            self.write_error(ex)
 
     async def execute(self):
         cdef:
@@ -245,10 +258,12 @@ cdef class EdgeConnection:
         compiled = None
 
         if stmt_name:
-            raise RuntimeError('named statements are not yet supported')
+            raise errors.UnsupportedFeatureError(
+                'prepared statements are not yet supported')
         else:
             if self._last_anon_compiled is None:
-                raise RuntimeError('no parsed anonymous query')
+                raise errors.BinaryProtocolError(
+                    'no prepared anonymous statement found')
 
             compiled = self._last_anon_compiled
 
@@ -287,7 +302,7 @@ cdef class EdgeConnection:
         bound_args = self.buffer.consume_message()
 
         if not query:
-            raise RuntimeError('empty query')
+            raise errors.BinaryProtocolError('empty query')
 
         compiled = self.dbview.lookup_compiled_query(query)
         if (compiled is None or
@@ -326,7 +341,7 @@ cdef class EdgeConnection:
                         await self.execute()
                         return
                     else:
-                        self.fallthrough()
+                        self.fallthrough(False)
                 finally:
                     self.buffer.finish_message()
 
@@ -363,7 +378,23 @@ cdef class EdgeConnection:
 
         try:
             await self.auth()
+        except Exception as ex:
+            self.write_error(ex)
+            self._transport.abort()
 
+            self.loop.call_exception_handler({
+                'message': (
+                    'unhandled error in edgedb protocol while '
+                    'accepting new connection'
+                ),
+                'exception': ex,
+                'protocol': self,
+                'transport': self._transport,
+                'task': self._main_task,
+            })
+            return
+
+        try:
             while True:
                 if not self.buffer.take_message():
                     await self.wait_for_message()
@@ -386,34 +417,71 @@ cdef class EdgeConnection:
                         await self.sync()
 
                     else:
-                        self.fallthrough()
-                finally:
+                        self.fallthrough(False)
+
+                except Exception as ex:
+                    self.buffer.finish_message()
+                    await self.recover_from_error()
+
+                else:
                     self.buffer.finish_message()
 
         except ConnectionAbortedError:
             return
 
         except Exception as ex:
+            # We can only be here if an exception occurred during
+            # handling another exception, in which case, the only
+            # sane option is to abort the connection.
+
             self.loop.call_exception_handler({
-                'message': 'unhandled error in edgedb protocol',
+                'message': (
+                    'unhandled error in edgedb protocol while '
+                    'handling an error'
+                ),
                 'exception': ex,
                 'protocol': self,
                 'transport': self._transport,
                 'task': self._main_task,
             })
 
-            # XXX instead of aborting:
-            # try to send an error message to the client
             self._transport.abort()
 
-    def serialize_error(self, exc):
+    async def recover_from_error(self):
+        # Consume all messages until sync.
+
+        while True:
+            if not self.buffer.take_message():
+                await self.wait_for_message()
+            mtype = self.buffer.get_message_type()
+
+            if mtype == b'Z':
+                self.sync()
+                return
+            else:
+                self.fallthrough(True)
+
+    cdef write_error(self, exc):
+        cdef:
+            WriteBuffer buf
+
         exc_code = None
 
         fields = {}
-        if isinstance(exc, errors.EdgeDBError):
-            if exc.get_code():
-                exc_code = exc.get_code()
+        if (isinstance(exc, errors.EdgeDBError) and
+                type(exc) is not errors.EdgeDBError):
+            exc_code = exc.get_code()
 
+        if not exc_code:
+            exc_code = errors.InternalServerError.get_code()
+
+        buf = WriteBuffer.new_message(b'E')
+        buf.write_int32(<int32_t><uint32_t>exc_code)
+        buf.write_utf8(str(exc))
+        buf.write_byte(b'\x00')
+        buf.end_message()
+
+        self.write(buf)
 
     cdef pgcon_last_sync_status(self):
         cdef:
@@ -431,10 +499,11 @@ cdef class EdgeConnection:
         elif xact_status == pgcon.PQTRANS_INERROR:
             buf.write_byte(b'E')
         else:
-            raise RuntimeError('unknown postgres connection status')
+            raise errors.InternalServerError(
+                'unknown postgres connection status')
         return buf.end_message()
 
-    cdef fallthrough(self):
+    cdef fallthrough(self, bint ignore_unhandled):
         cdef:
             char mtype = self.buffer.get_message_type()
 
@@ -444,8 +513,9 @@ cdef class EdgeConnection:
             self.buffer.discard_message()
             return
 
-        raise RuntimeError(
-            f'unexpected message type {chr(mtype)!r}')
+        if not ignore_unhandled:
+            raise errors.BinaryProtocolError(
+                f'unexpected message type {chr(mtype)!r}')
 
     cdef WriteBuffer recode_bind_args(self, bytes bind_args):
         cdef:
@@ -479,7 +549,8 @@ cdef class EdgeConnection:
 
     def connection_made(self, transport):
         if self._con_status != EDGECON_NEW:
-            raise RuntimeError('connection_made: invalid connection status')
+            raise errors.BinaryProtocolError(
+                'invalid connection status while establishing the connection')
         self._transport = transport
         self._main_task = self.loop.create_task(self.main())
         # self.server.edgecon_register(self)

@@ -58,6 +58,7 @@ cdef class PGProto:
         bint connected
         object connected_fut
 
+        bint sync_sent
         PGTransactionStatus xact_status
 
         readonly int32_t backend_pid
@@ -74,5 +75,3 @@ cdef class PGProto:
     cdef fallthrough(self)
 
     cdef make_clean_stmt_message(self, bytes stmt_name)
-
-    cdef int64_t parse_tracing_data(self, bytes message) except -1

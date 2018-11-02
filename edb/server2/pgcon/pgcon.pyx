@@ -77,7 +77,9 @@ cdef class PGProto:
         self.connected_fut = loop.create_future()
         self.connected = False
 
+        self.sync_sent = False
         self.xact_status = PQTRANS_UNKNOWN
+
         self.backend_pid = -1
         self.backend_secret = -1
 
@@ -91,10 +93,22 @@ cdef class PGProto:
         self.transport = None
         self.connected = False
 
+    def terminate(self):
+        if not self.transport:
+            return
+        self.write(WriteBuffer.new_message(b'X').end_message())
+        self.transport.close()
+        self.transport = None
+        self.connected = False
+
         if self.msg_waiter and not self.msg_waiter.done():
             self.msg_waiter.set_exception(ConnectionAbortedError())
 
     async def sync(self):
+        if self.sync_sent:
+            raise RuntimeError('a "sync" has already been requested')
+
+        self.sync_sent = True
         self.write(SYNC_MESSAGE)
 
         while True:
@@ -107,6 +121,21 @@ cdef class PGProto:
                 return
             else:
                 self.fallthrough()
+
+    async def wait_for_sync(self):
+        while True:
+            if not self.buffer.take_message():
+                await self.wait_for_message()
+            mtype = self.buffer.get_message_type()
+            if mtype == b'Z':
+                self.parse_sync_message()
+                return
+            else:
+                if not self.parse_notification():
+                    if PG_DEBUG:
+                        print(f'PGCon.wait_for_sync: discarding '
+                              f'{chr(mtype)!r} message')
+                    self.buffer.discard_message()
 
     async def parse_execute(self,
                             bint parse,
@@ -122,10 +151,8 @@ cdef class PGProto:
             WriteBuffer buf
             bytes stmt_name
             bint store_stmt = 0
-            bint tracing = 0
 
-        if not self.connected:
-            raise RuntimeError('not connected')
+        await self.before_command()
 
         if not parse and not execute:
             raise RuntimeError('invalid parse/execute call')
@@ -155,10 +182,6 @@ cdef class PGProto:
         else:
             stmt_name = b''
 
-        if tracing:
-            buf = WriteBuffer.new_message(b'?')
-            packet.write_buffer(buf.end_message())
-
         if parse:
             buf = WriteBuffer.new_message(b'P')
             buf.write_bytestring(stmt_name)
@@ -182,6 +205,7 @@ cdef class PGProto:
 
         if send_sync:
             packet.write_bytes(SYNC_MESSAGE)
+            self.sync_sent = True
         else:
             packet.write_bytes(FLUSH_MESSAGE)
         self.write(packet)
@@ -247,10 +271,6 @@ cdef class PGProto:
                         # CloseComplete
                         self.buffer.discard_message()
 
-                    elif mtype == b'?':
-                        msg = self.buffer.consume_message()
-                        print("TRACE", chr(msg[0]), self.parse_tracing_data(msg))
-
                     else:
                         self.fallthrough()
 
@@ -300,6 +320,9 @@ cdef class PGProto:
         outbuf.write_buffer(buf)
         self.write(outbuf)
 
+        # Need this to handle first ReadyForQuery
+        self.sync_sent = True
+
         while True:
             if not self.buffer.take_message():
                 await self.wait_for_message()
@@ -334,20 +357,12 @@ cdef class PGProto:
             finally:
                 self.buffer.finish_message()
 
-    async def wait_for_sync(self):
-        while True:
-            if not self.buffer.take_message():
-                await self.wait_for_message()
-            mtype = self.buffer.get_message_type()
-            if mtype == b'Z':
-                self.parse_sync_message()
-                return
-            else:
-                if not self.parse_notification():
-                    if PG_DEBUG:
-                        print(f'PGCon.wait_for_sync: discarding '
-                              f'{chr(mtype)!r} message')
-                    self.buffer.discard_message()
+    async def before_command(self):
+        if not self.connected:
+            raise RuntimeError('not connected')
+
+        if self.sync_sent:
+            raise RuntimeError('cannot issue new command')
 
     cdef write(self, WriteBuffer buf):
         self.transport.write(buf)
@@ -404,6 +419,9 @@ cdef class PGProto:
     cdef parse_sync_message(self):
         cdef char status
 
+        if not self.sync_sent:
+            raise RuntimeError('unexpected sync')
+
         assert self.buffer.get_message_type() == b'Z'
 
         status = self.buffer.read_byte()
@@ -418,17 +436,6 @@ cdef class PGProto:
             self.xact_status = PQTRANS_UNKNOWN
 
         self.buffer.finish_message()
-
-    cdef int64_t parse_tracing_data(self, bytes message) except -1:
-        cdef:
-            const char* cbuf
-            ssize_t cbuf_len
-            FRBuffer rbuf
-
-        cbuf = cpython.PyBytes_AS_STRING(message)
-        cbuf_len = cpython.PyBytes_GET_SIZE(message)
-        frb_init(&rbuf, cbuf + 1, cbuf_len - 1)
-        return hton.unpack_int64(frb_read(&rbuf, 8))
 
     cdef make_clean_stmt_message(self, bytes stmt_name):
         cdef WriteBuffer buf

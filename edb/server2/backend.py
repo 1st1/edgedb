@@ -40,7 +40,7 @@ class Backend:
         return self._compiler
 
     async def close(self):
-        self._pgcon.abort()
+        self._pgcon.terminate()
         self._compiler.close()
 
 
