@@ -35,6 +35,7 @@ __all__ = base.__all__ + (
     'UnknownUserError',
     'UnknownDatabaseError',
     'UnknownParameterError',
+    'SchemaError',
     'SchemaDefinitionError',
     'InvalidDefinitionError',
     'InvalidModuleDefinitionError',
@@ -158,64 +159,68 @@ class UnknownParameterError(InvalidReferenceError):
     _code = 0x_04_04_00_06
 
 
-class SchemaDefinitionError(QueryError):
+class SchemaError(QueryError):
     _code = 0x_04_05_00_00
 
 
-class InvalidDefinitionError(SchemaDefinitionError):
-    _code = 0x_04_05_01_00
-
-
-class InvalidModuleDefinitionError(InvalidDefinitionError):
-    _code = 0x_04_05_01_01
-
-
-class InvalidLinkDefinitionError(InvalidDefinitionError):
-    _code = 0x_04_05_01_02
-
-
-class InvalidPropertyDefinitionError(InvalidDefinitionError):
-    _code = 0x_04_05_01_03
-
-
-class InvalidUserDefinitionError(InvalidDefinitionError):
-    _code = 0x_04_05_01_04
-
-
-class InvalidDatabaseDefinitionError(InvalidDefinitionError):
-    _code = 0x_04_05_01_05
-
-
-class DuplicateDefinitionError(SchemaDefinitionError):
-    _code = 0x_04_05_02_00
-
-
-class DuplicateModuleDefinitionError(DuplicateDefinitionError):
-    _code = 0x_04_05_02_01
-
-
-class DuplicateLinkDefinitionError(DuplicateDefinitionError):
-    _code = 0x_04_05_02_02
-
-
-class DuplicatePropertyDefinitionError(DuplicateDefinitionError):
-    _code = 0x_04_05_02_03
-
-
-class DuplicateUserDefinitionError(DuplicateDefinitionError):
-    _code = 0x_04_05_02_04
-
-
-class DuplicateDatabaseDefinitionError(DuplicateDefinitionError):
-    _code = 0x_04_05_02_05
-
-
-class IntegrityError(QueryError):
+class SchemaDefinitionError(QueryError):
     _code = 0x_04_06_00_00
 
 
+class InvalidDefinitionError(SchemaDefinitionError):
+    _code = 0x_04_06_01_00
+
+
+class InvalidModuleDefinitionError(InvalidDefinitionError):
+    _code = 0x_04_06_01_01
+
+
+class InvalidLinkDefinitionError(InvalidDefinitionError):
+    _code = 0x_04_06_01_02
+
+
+class InvalidPropertyDefinitionError(InvalidDefinitionError):
+    _code = 0x_04_06_01_03
+
+
+class InvalidUserDefinitionError(InvalidDefinitionError):
+    _code = 0x_04_06_01_04
+
+
+class InvalidDatabaseDefinitionError(InvalidDefinitionError):
+    _code = 0x_04_06_01_05
+
+
+class DuplicateDefinitionError(SchemaDefinitionError):
+    _code = 0x_04_06_02_00
+
+
+class DuplicateModuleDefinitionError(DuplicateDefinitionError):
+    _code = 0x_04_06_02_01
+
+
+class DuplicateLinkDefinitionError(DuplicateDefinitionError):
+    _code = 0x_04_06_02_02
+
+
+class DuplicatePropertyDefinitionError(DuplicateDefinitionError):
+    _code = 0x_04_06_02_03
+
+
+class DuplicateUserDefinitionError(DuplicateDefinitionError):
+    _code = 0x_04_06_02_04
+
+
+class DuplicateDatabaseDefinitionError(DuplicateDefinitionError):
+    _code = 0x_04_06_02_05
+
+
+class IntegrityError(QueryError):
+    _code = 0x_04_07_00_00
+
+
 class ConstraintViolationError(IntegrityError):
-    _code = 0x_04_06_00_01
+    _code = 0x_04_07_00_01
 
 
 class ConfigurationError(EdgeDBError):

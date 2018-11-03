@@ -58,7 +58,7 @@ cdef class PGProto:
         bint connected
         object connected_fut
 
-        bint sync_sent
+        bint waiting_for_sync
         PGTransactionStatus xact_status
 
         readonly int32_t backend_pid

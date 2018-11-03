@@ -77,7 +77,7 @@ cdef class PGProto:
         self.connected_fut = loop.create_future()
         self.connected = False
 
-        self.sync_sent = False
+        self.waiting_for_sync = False
         self.xact_status = PQTRANS_UNKNOWN
 
         self.backend_pid = -1
@@ -105,10 +105,10 @@ cdef class PGProto:
             self.msg_waiter.set_exception(ConnectionAbortedError())
 
     async def sync(self):
-        if self.sync_sent:
+        if self.waiting_for_sync:
             raise RuntimeError('a "sync" has already been requested')
 
-        self.sync_sent = True
+        self.waiting_for_sync = True
         self.write(SYNC_MESSAGE)
 
         while True:
@@ -205,7 +205,7 @@ cdef class PGProto:
 
         if send_sync:
             packet.write_bytes(SYNC_MESSAGE)
-            self.sync_sent = True
+            self.waiting_for_sync = True
         else:
             packet.write_bytes(FLUSH_MESSAGE)
         self.write(packet)
@@ -321,7 +321,7 @@ cdef class PGProto:
         self.write(outbuf)
 
         # Need this to handle first ReadyForQuery
-        self.sync_sent = True
+        self.waiting_for_sync = True
 
         while True:
             if not self.buffer.take_message():
@@ -361,7 +361,7 @@ cdef class PGProto:
         if not self.connected:
             raise RuntimeError('not connected')
 
-        if self.sync_sent:
+        if self.waiting_for_sync:
             raise RuntimeError('cannot issue new command')
 
     cdef write(self, WriteBuffer buf):
@@ -419,8 +419,9 @@ cdef class PGProto:
     cdef parse_sync_message(self):
         cdef char status
 
-        if not self.sync_sent:
+        if not self.waiting_for_sync:
             raise RuntimeError('unexpected sync')
+        self.waiting_for_sync = False
 
         assert self.buffer.get_message_type() == b'Z'
 

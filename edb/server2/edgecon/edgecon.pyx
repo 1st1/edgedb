@@ -41,6 +41,7 @@ from edb.server2.pgcon cimport pgcon
 import asyncio
 
 from edb import errors
+from edb.lang.common import debug
 
 
 DEF FLUSH_BUFFER_AFTER = 100_000
@@ -233,7 +234,7 @@ cdef class EdgeConnection:
                         'prepared statements are not yet supported')
                 else:
                     if self._last_anon_compiled is None:
-                        raise errors.BinaryProtocolError(
+                        raise errors.TypeSpecNotFoundError(
                             'no prepared anonymous statement found')
 
                     msg = self.make_describe_response(self._last_anon_compiled)
@@ -464,6 +465,16 @@ cdef class EdgeConnection:
     cdef write_error(self, exc):
         cdef:
             WriteBuffer buf
+
+        if debug.flags.server:
+            self.loop.call_exception_handler({
+                'message': (
+                    'an error in edgedb protocol'
+                ),
+                'exception': exc,
+                'protocol': self,
+                'transport': self._transport,
+            })
 
         exc_code = None
 

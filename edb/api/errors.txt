@@ -64,24 +64,26 @@
 0x_04_04_00_05   UnknownDatabaseError
 0x_04_04_00_06   UnknownParameterError
 
-0x_04_05_00_00   SchemaDefinitionError
+0x_04_05_00_00   SchemaError
 
-0x_04_05_01_00   InvalidDefinitionError
-0x_04_05_01_01   InvalidModuleDefinitionError
-0x_04_05_01_02   InvalidLinkDefinitionError
-0x_04_05_01_03   InvalidPropertyDefinitionError
-0x_04_05_01_04   InvalidUserDefinitionError
-0x_04_05_01_05   InvalidDatabaseDefinitionError
+0x_04_06_00_00   SchemaDefinitionError
 
-0x_04_05_02_00   DuplicateDefinitionError
-0x_04_05_02_01   DuplicateModuleDefinitionError
-0x_04_05_02_02   DuplicateLinkDefinitionError
-0x_04_05_02_03   DuplicatePropertyDefinitionError
-0x_04_05_02_04   DuplicateUserDefinitionError
-0x_04_05_02_05   DuplicateDatabaseDefinitionError
+0x_04_06_01_00   InvalidDefinitionError
+0x_04_06_01_01   InvalidModuleDefinitionError
+0x_04_06_01_02   InvalidLinkDefinitionError
+0x_04_06_01_03   InvalidPropertyDefinitionError
+0x_04_06_01_04   InvalidUserDefinitionError
+0x_04_06_01_05   InvalidDatabaseDefinitionError
 
-0x_04_06_00_00   IntegrityError
-0x_04_06_00_01   ConstraintViolationError
+0x_04_06_02_00   DuplicateDefinitionError
+0x_04_06_02_01   DuplicateModuleDefinitionError
+0x_04_06_02_02   DuplicateLinkDefinitionError
+0x_04_06_02_03   DuplicatePropertyDefinitionError
+0x_04_06_02_04   DuplicateUserDefinitionError
+0x_04_06_02_05   DuplicateDatabaseDefinitionError
+
+0x_04_07_00_00   IntegrityError
+0x_04_07_00_01   ConstraintViolationError
 
 
 ####

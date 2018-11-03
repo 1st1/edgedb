@@ -19,10 +19,11 @@
 
 import weakref
 
-from . import compilerworker
-from . import pgcon
-from . import procpool
-from . import taskgroup
+from edb.server2 import pgcon
+from edb.server2 import procpool
+from edb.server2 import taskgroup
+
+from . import compiler
 
 
 class Backend:
@@ -58,7 +59,7 @@ class BackendManager:
         self._compiler_manager = await procpool.create_manager(
             runstate_dir=self._runstate_dir,
             name='edgedb-compiler',
-            worker_cls=compilerworker.Compiler,
+            worker_cls=compiler.Compiler,
             worker_args=(dict(host=self._pgaddr),))
 
     async def stop(self):

@@ -17,25 +17,13 @@
 #
 
 
-__all__ = (
-    'EdgeDBError',
-)
+import typing
 
 
-class EdgeDBError(Exception):
+class CompilerDatabaseState(typing.NamedTuple):
 
-    _code = None
-
-    def __init__(self, msg: str, *, details: str=None):
-        if type(self) is EdgeDBError:
-            raise RuntimeError(
-                'EdgeDBError is not supposed to be instantiated directly')
-        if details:
-            msg = f'{msg}\n\nDETAILS: {details}'
-        super().__init__(msg)
-
-    @classmethod
-    def get_code(cls):
-        if cls._code is None:
-            raise RuntimeError('EdgeDB exception code is not set')
-        return cls._code
+    dbver: int
+    name: str
+    con_args: dict
+    type_cache: object
+    schema: object
