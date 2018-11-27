@@ -17,8 +17,24 @@
 #
 
 
-from .edb import edbcommands  # noqa
-from . import gen_errors  # noqa
-from . import gen_types  # noqa
-from . import inittestdb  # noqa
-from . import test  # noqa
+@cython.final
+@cython.no_gc_clear
+@cython.auto_pickle(True)
+cdef class CompiledQuery:
+
+    cdef:
+        readonly uint64_t dbver
+        readonly bytes out_type_data
+        readonly bytes out_type_id
+        readonly bytes in_type_data
+        readonly bytes in_type_id
+        readonly bytes sql
+        readonly bytes sql_hash
+
+        readonly bint has_ddl
+        readonly bint multi_stmt
+        readonly bint opens_tx
+
+        readonly dict session_set_modaliases
+        readonly dict session_unset_modaliases
+        readonly dict session_params

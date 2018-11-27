@@ -104,7 +104,8 @@ class NodeCommand(sd.ObjectCommand):
                 expr = qlast.SelectQuery(result=expr)
             ir = qlcompiler.compile_ast_to_ir(
                 expr, schema, derived_target_module=classname.module,
-                result_view_name=classname, modaliases=context.modaliases)
+                result_view_name=classname, modaliases=context.modaliases,
+                schema_view_mode=True)
             context.cache_value((expr, classname), ir)
 
         return ir

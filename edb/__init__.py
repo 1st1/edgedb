@@ -17,8 +17,6 @@
 #
 
 
-from .edb import edbcommands  # noqa
-from . import gen_errors  # noqa
-from . import gen_types  # noqa
-from . import inittestdb  # noqa
-from . import test  # noqa
+# DO NOT ADD ANYTHING TO THIS FILE:
+# we might want to make "edb" a namespace
+# package at some point.

@@ -17,8 +17,15 @@
 #
 
 
-from .edb import edbcommands  # noqa
-from . import gen_errors  # noqa
-from . import gen_types  # noqa
-from . import inittestdb  # noqa
-from . import test  # noqa
+cdef class StatementsCache:
+
+    cdef:
+        object _dict
+        int _maxsize
+        object _dict_move_to_end
+        object _dict_get
+
+    cdef get(self, key, default)
+
+    cdef needs_cleanup(self)
+    cdef cleanup_one(self)
