@@ -82,8 +82,8 @@ def compile_ir_to_sql(
         output_format: typing.Optional[OutputFormat]=None,
         ignore_shapes: bool=False,
         timer=None,
-        use_named_params: bool=False) \
-        -> typing.Tuple[str, typing.Dict[str, int]]:
+        use_named_params: bool=False,
+        pretty: bool=True) -> typing.Tuple[str, typing.Dict[str, int]]:
 
     if timer is None:
         qtree = compile_ir_to_sql_tree(
@@ -105,10 +105,10 @@ def compile_ir_to_sql(
 
     # Generate query text
     if timer is None:
-        codegen = _run_codegen(qtree)
+        codegen = _run_codegen(qtree, pretty=pretty)
     else:
         with timer.timeit('compile_ir_to_sql'):
-            codegen = _run_codegen(qtree)
+            codegen = _run_codegen(qtree, pretty=pretty)
 
     sql_text = ''.join(codegen.result)
 
@@ -119,8 +119,8 @@ def compile_ir_to_sql(
     return sql_text, argmap
 
 
-def _run_codegen(qtree):
-    codegen = pgcodegen.SQLSourceGenerator()
+def _run_codegen(qtree, *, pretty=True):
+    codegen = pgcodegen.SQLSourceGenerator(pretty=pretty)
     try:
         codegen.visit(qtree)
     except pgcodegen.SQLSourceGeneratorError as e:  # pragma: no cover

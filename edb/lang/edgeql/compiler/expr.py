@@ -102,8 +102,9 @@ def compile_Parameter(
             f'"$parameters" cannot be used in functions',
             context=expr.context)
 
+    pt = ctx.env.query_parameters.get(expr.name)
     return setgen.ensure_set(
-        irast.Parameter(stype=None, name=expr.name), ctx=ctx)
+        irast.Parameter(stype=pt, name=expr.name), ctx=ctx)
 
 
 @dispatch.compile.register(qlast.DetachedExpr)
@@ -448,6 +449,37 @@ def compile_TypeCast(
     if (isinstance(expr.expr, qlast.Array) and not expr.expr.elements and
             target_typeref.maintype == 'array'):
         ir_expr = irast.Array()
+
+    elif isinstance(expr.expr, qlast.Parameter):
+        pt = typegen.ql_typeref_to_type(expr.type, ctx=ctx)
+        param_name = expr.expr.name
+        if param_name not in ctx.env.query_parameters:
+            if ctx.env.query_parameters:
+                first_key: str = next(iter(ctx.env.query_parameters))
+                if first_key.isdecimal():
+                    if not param_name.isdecimal():
+                        raise errors.EdgeQLError(
+                            f'expected a positional argument',
+                            context=expr.expr.context)
+                else:
+                    if param_name.isdecimal():
+                        raise errors.EdgeQLError(
+                            f'expected a named argument',
+                            context=expr.expr.context)
+            ctx.env.query_parameters[param_name] = pt
+        else:
+            param_first_type = ctx.env.query_parameters[param_name]
+            if not param_first_type.explicitly_castable_to(pt, ctx.env.schema):
+                raise errors.EdgeQLError(
+                    f'cannot cast '
+                    f'{param_first_type.get_displayname(ctx.env.schema)} to '
+                    f'{pt.get_displayname(ctx.env.schema)}',
+                    context=expr.expr.context)
+
+        param = irast.Parameter(
+            stype=pt, name=param_name, context=expr.expr.context)
+        return setgen.ensure_set(param, ctx=ctx)
+
     else:
         with ctx.new() as subctx:
             # We use "exposed" mode in case this is a type of a cast

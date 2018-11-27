@@ -107,7 +107,8 @@ def compile_ast_to_ir(tree,
                       derived_target_module=None,
                       result_view_name=None,
                       modaliases=None,
-                      implicit_id_in_shapes=False):
+                      implicit_id_in_shapes=False,
+                      schema_view_mode=False):
     """Compile given EdgeQL AST into EdgeDB IR."""
 
     if debug.flags.edgeql_compile:
@@ -119,10 +120,23 @@ def compile_ast_to_ir(tree,
         modaliases=modaliases, security_context=security_context,
         func=func, derived_target_module=derived_target_module,
         result_view_name=result_view_name,
-        implicit_id_in_shapes=implicit_id_in_shapes)
+        implicit_id_in_shapes=implicit_id_in_shapes,
+        schema_view_mode=schema_view_mode)
 
     ir_set = dispatch.compile(tree, ctx=ctx)
     ir_expr = stmtctx.fini_expression(ir_set, ctx=ctx)
+
+    if ctx.env.query_parameters:
+        first_argname = next(iter(ctx.env.query_parameters))
+        if first_argname.isdecimal():
+            args_decnames = {int(arg) for arg in ctx.env.query_parameters}
+            args_tpl = set(range(len(ctx.env.query_parameters)))
+            if args_decnames != args_tpl:
+                missing_args = args_tpl - args_decnames
+                missing_args_repr = ', '.join(f'${a}' for a in missing_args)
+                raise ql_errors.EdgeQLError(
+                    f'missing {missing_args_repr} positional argument'
+                    f'{"s" if len(missing_args) > 1 else ""}')
 
     if debug.flags.edgeql_compile:
         debug.header('Scope Tree')
