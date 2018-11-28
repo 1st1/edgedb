@@ -42,7 +42,7 @@ RUNTIME_DEPS = [
     'pygments',
     'setproctitle',
     'typing_inspect~=0.3.1',
-    'uvloop~=0.11.3',
+    'uvloop~=0.12.0rc1',
 ]
 
 CYTHON_DEPENDENCY = 'Cython==0.29.0'
