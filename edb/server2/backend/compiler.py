@@ -30,6 +30,7 @@ from edb.server.pgsql import compiler as pg_compiler
 from edb.server.pgsql import intromech
 
 from edb.lang import edgeql
+from edb.lang.common import debug
 
 from edb.lang.edgeql import ast as qlast
 from edb.lang.edgeql import compiler as ql_compiler
@@ -103,7 +104,7 @@ class Compiler:
         sql_text, argmap = pg_compiler.compile_ir_to_sql(
             ir,
             schema=ir.schema,
-            pretty=False,
+            pretty=debug.flags.edgeql_compile,
             output_format=ctx.output_format)
 
         extra = {}
