@@ -397,11 +397,11 @@ class Compiler:
         self._cached_db = None
         await self._get_database(dbver)
 
-    async def compile_eql_stmt(self, dbver: int,
-                               eql: bytes,
-                               sess_modaliases: immutables.Map,
-                               sess_vars: immutables.Map,
-                               json_mode: bool) -> dbstate.CompiledQuery:
+    async def compile_eql(self, dbver: int,
+                          eql: bytes,
+                          sess_modaliases: immutables.Map,
+                          sess_config: immutables.Map,
+                          json_mode: bool) -> dbstate.CompiledQuery:
         eql = eql.decode()
         db = await self._get_database(dbver)
 
@@ -410,5 +410,18 @@ class Compiler:
             schema=db.schema,
             eql=eql,
             sess_modaliases=sess_modaliases,
-            sess_vars=sess_vars,
+            sess_vars=sess_config,
             json_mode=json_mode)
+
+    async def compile_eql_in_tx(self, eql: bytes, txid: bytes):
+        raise NotImplementedError
+
+    async def compile_eql_script(self, dbver: int,
+                                 eql: bytes,
+                                 sess_modaliases: immutables.Map,
+                                 sess_config: immutables.Map,
+                                 json_mode: bool) -> dbstate.CompiledQuery:
+        raise NotImplementedError
+
+    async def compile_eql_script_in_tx(self, eql: bytes, txid: bytes):
+        raise NotImplementedError
