@@ -115,6 +115,7 @@ class Server:
 
         self._backend_manager = backend.BackendManager(
             runstate_dir=self._runstate_dir,
+            data_dir=self._cluster.get_data_dir(),
             pgaddr=pgaddr)
         await self._backend_manager.start()
 
