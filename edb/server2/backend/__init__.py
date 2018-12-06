@@ -48,9 +48,10 @@ class Backend:
 
 class BackendManager:
 
-    def __init__(self, *, pgaddr, runstate_dir):
+    def __init__(self, *, pgaddr, runstate_dir, data_dir):
         self._pgaddr = pgaddr
         self._runstate_dir = runstate_dir
+        self._data_dir = data_dir
 
         self._backends = weakref.WeakSet()
 
@@ -61,7 +62,7 @@ class BackendManager:
             runstate_dir=self._runstate_dir,
             name='edgedb-compiler',
             worker_cls=compiler.Compiler,
-            worker_args=(dict(host=self._pgaddr),))
+            worker_args=(dict(host=self._pgaddr), self._data_dir))
 
     async def stop(self):
         # TODO: Make a graceful version of this.
