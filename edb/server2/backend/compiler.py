@@ -39,10 +39,13 @@ from edb.lang.edgeql import ast as qlast
 from edb.lang.edgeql import compiler as ql_compiler
 from edb.lang.edgeql import quote as ql_quote
 
+from edb.lang.ir import staeval as ireval
+
 from edb.lang.schema import database as s_db
 from edb.lang.schema import ddl as s_ddl
 from edb.lang.schema import delta as s_delta
 from edb.lang.schema import deltas as s_deltas
+from edb.lang.schema import error as s_err
 from edb.lang.schema import schema as s_schema
 from edb.lang.schema import std as s_std
 from edb.lang.schema import types as s_types
@@ -50,8 +53,8 @@ from edb.lang.schema import types as s_types
 from edb.server.pgsql import delta as pg_delta
 from edb.server.pgsql import dbops as pg_dbops
 
-from edb.server2 import dbstate
-
+from . import config
+from . import dbstate
 from . import sertypes
 
 
@@ -65,15 +68,7 @@ class CompilerDatabaseState(typing.NamedTuple):
 class CompileContext(typing.NamedTuple):
 
     dbver: int
-
-    original_schema: s_schema.Schema
-    original_modaliases: immutables.Map
-    original_sess_vars: immutables.Map
-
-    current_schema: s_schema.Schema
-    current_modaliases: immutables.Map
-    current_sess_vars: immutables.Map
-
+    state: dbstate.ConnectionState
     output_format: pg_compiler.OutputFormat
     single_query_mode: bool
 
@@ -93,6 +88,7 @@ class Compiler:
         self._dbname = None
         self._cached_db = None
         self._cached_std_schema = None
+        self._current_db_state = None
 
     async def _get_database(self, dbver: int) -> CompilerDatabaseState:
         if self._cached_db is not None and self._cached_db.dbver == dbver:
@@ -141,11 +137,33 @@ class Compiler:
             h.update(val)
         return h.hexdigest().encode('latin1')
 
-    def _compile_ql_query(self, ctx: CompileContext, ql: qlast.Base):
+    def _process_delta(self, delta, schema):
+        """Adapt and process the delta command."""
+
+        if debug.flags.delta_plan:
+            debug.header('Delta Plan')
+            debug.dump(delta, schema=schema)
+
+        delta = pg_delta.CommandMeta.adapt(delta)
+        context = pg_delta.CommandContext(self.connection)
+        schema, _ = delta.apply(schema, context)
+
+        if debug.flags.delta_pgsql_plan:
+            debug.header('PgSQL Delta Plan')
+            debug.dump(delta, schema=schema)
+
+        return schema, delta
+
+    def _compile_ql_query(
+            self, ctx: CompileContext,
+            ql: qlast.Base) -> dbstate.BaseQuery:
+
+        current_tx = ctx.state.current_tx()
+
         ir = ql_compiler.compile_ast_to_ir(
             ql,
-            schema=ctx.current_schema,
-            modaliases=ctx.sess_modaliases,
+            schema=current_tx.get_schema(),
+            modaliases=current_tx.get_modaliases(),
             implicit_id_in_shapes=False)
 
         sql_text, argmap = pg_compiler.compile_ir_to_sql(
@@ -154,7 +172,8 @@ class Compiler:
             pretty=debug.flags.edgeql_compile,
             output_format=ctx.output_format)
 
-        extra = {}
+        sql_bytes = sql_text.encode(defines.EDGEDB_ENCODING)
+
         if ctx.single_query_mode:
             if ctx.output_format is pg_compiler.OutputFormat.NATIVE:
                 out_type_data, out_type_id = sertypes.TypeSerializer.describe(
@@ -187,39 +206,31 @@ class Compiler:
             in_type_data, in_type_id = sertypes.TypeSerializer.describe(
                 ir.schema, params_type, {})
 
-            extra['in_type_id'] = in_type_id.bytes
-            extra['in_type_data'] = in_type_data
-            extra['out_type_id'] = out_type_id.bytes
-            extra['out_type_data'] = out_type_data
+            sql_hash = self._hash_sql(
+                sql_bytes, mode=str(ctx.output_format).encode())
 
-        sql_bytes = sql_text.encode(defines.EDGEDB_ENCODING)
+            return dbstate.Query(
+                sql=sql_bytes,
+                sql_hash=sql_hash,
+                in_type_id=in_type_id.bytes,
+                in_type_data=in_type_data,
+                out_type_id=out_type_id.bytes,
+                out_type_data=out_type_data,
+            )
 
-        return dbstate.CompiledQuery(
-            dbver=ctx.dbver,
-            sql=sql_bytes,
-            sql_hash=self._hash_sql(
-                sql_bytes, mode=str(ctx.output_format).encode()),
-            **extra)
+        else:
+            if ir.params:
+                raise RuntimeError(
+                    'queries compiled in script mode cannot accept parameters')
 
-    def _process_delta(self, delta, schema):
-        """Adapt and process the delta command."""
+            return dbstate.SimpleQuery(sql=sql_bytes)
 
-        if debug.flags.delta_plan:
-            debug.header('Delta Plan')
-            debug.dump(delta, schema=schema)
+    def _compile_and_apply_delta_command(
+            self, ctx: CompileContext, cmd) -> dbstate.BaseQuery:
 
-        delta = self.adapt_delta(delta)
-        context = pg_delta.CommandContext(self.connection)
-        schema, _ = delta.apply(schema, context)
+        current_tx = ctx.state.current_tx()
 
-        if debug.flags.delta_pgsql_plan:
-            debug.header('PgSQL Delta Plan')
-            debug.dump(delta, schema=schema)
-
-        return schema, delta
-
-    def _compile_and_apply_delta_command(self, ctx: CompileContext, cmd):
-        schema = self.schema
+        schema = current_tx.get_schema()
         context = s_delta.CommandContext()
 
         if isinstance(cmd, s_deltas.CreateDelta):
@@ -235,27 +246,21 @@ class Compiler:
 
             elif isinstance(cmd, s_deltas.GetDelta):
                 delta_ql = s_ddl.ddl_text_from_delta(schema, delta)
-                json_mode = ctx.output_format == pg_compiler.OutputFormat.JSON
-                return self._compile_single(
-                    dbver=ctx.dbver,
-                    schema=ctx.current_schema,
-                    eql=f'SELECT {ql_quote.quote_literal(delta_ql)};',
-                    sess_modaliases=EMPTY_MAP,
-                    sess_vars=EMPTY_MAP,
-                    json_mode=json_mode)
+                return self._compile_statement(
+                    ctx=ctx,
+                    eql=f'SELECT {ql_quote.quote_literal(delta_ql)};')
 
             elif isinstance(cmd, s_deltas.CreateDelta):
-                ctx.current_schema, _ = cmd.apply(schema, context)
-                return dbstate.CompiledQuery(
-                    dbver=ctx.dbver,
-                    sql=b'',
-                    sql_hash=b'')
+                schema, _ = cmd.apply(schema, context)
+                current_tx.update_schema(schema)
+                return dbstate.DDLQuery(sql=b'')
 
             else:
                 raise RuntimeError(f'unexpected delta command: {cmd!r}')
 
     def _compile_and_apply_ddl_command(self, ctx: CompileContext, cmd):
-        schema = ctx.current_schema
+        current_tx = ctx.state.current_tx()
+        schema = current_tx.get_schema()
 
         if debug.flags.delta_plan_input:
             debug.header('Delta Plan Input')
@@ -281,14 +286,13 @@ class Compiler:
         plan.generate(block)
         sql = block.to_string().encode('utf-8')
 
-        ctx.current_schema = schema
+        current_tx.update_schema(schema)
 
-        return dbstate.CompiledQuery(
-            dbver=ctx.dbver,
-            sql=sql,
-            sql_hash=self._hash_sql(sql))
+        return dbstate.DDLQuery(sql=sql)
 
-    def _compile_command(self, ctx: CompileContext, cmd):
+    def _compile_command(
+            self, ctx: CompileContext, cmd) -> dbstate.BaseQuery:
+
         if isinstance(cmd, s_deltas.DeltaCommand):
             return self._compile_and_apply_delta_command(ctx, cmd)
 
@@ -323,25 +327,81 @@ class Compiler:
 
         return self._compile_command(cmd)
 
-    def _compile_ql_transaction(self, ctx: CompileContext,
-                                ql: qlast.Transaction):
+    def _compile_ql_transaction(
+            self, ctx: CompileContext,
+            ql: qlast.Transaction) -> dbstate.Query:
+
         if isinstance(ql, qlast.StartTransaction):
+            ctx.state.start_tx()
             sql = b'START TRANSACTION;'
+            action = dbstate.TxAction.START
+
         elif isinstance(ql, qlast.CommitTransaction):
+            ctx.state.commit_tx()
             sql = b'COMMIT;'
+            action = dbstate.TxAction.COMMIT
+
         elif isinstance(ql, qlast.RollbackTransaction):
+            ctx.state.rollback_tx()
             sql = b'ROLLBACK;'
+            action = dbstate.TxAction.ROLLBACK
+
         else:
             raise ValueError(f'expecting transaction node, got {ql!r}')
 
-        return dbstate.CompiledQuery(
-            dbver=ctx.dbver,
-            sql=sql,
-            sql_hash=self._hash_sql(sql))
+        return dbstate.TxControlQuery(sql=sql, action=action)
 
     def _compile_ql_sess_state(self, ctx: CompileContext,
-                               ql: qlast.SessionStateDecl):
-        raise NotImplementedError
+                               ql: qlast.SetSessionState):
+        aliases = {}
+        config_vals = {}
+
+        for item in ql.items:
+            if isinstance(item, qlast.SessionSettingModuleDecl):
+                try:
+                    module = ctx.schema.get(item.module)
+                except s_err.ItemNotFoundError:
+                    raise errors.EdgeQLError(
+                        f'module {item.module!r} does not exist',
+                        context=item.context
+                    )
+
+                aliases[item.alias] = module
+
+            elif isinstance(item, qlast.SessionSettingConfigDecl):
+                name = item.alias
+
+                try:
+                    desc = config.configs[name]
+                except KeyError:
+                    raise RuntimeError(
+                        f'invalid SET expression: '
+                        f'unknown CONFIG setting {name!r}')
+
+                try:
+                    val_ir = ql_compiler.compile_ast_fragment_to_ir(
+                        item.expr, schema=ctx.schema)
+                    val = ireval.evaluate_to_python_val(
+                        val_ir, schema=ctx.schema)
+                except ireval.StaticEvaluationError:
+                    raise RuntimeError('invalid SET expression')
+                else:
+                    if not isinstance(val, desc.type):
+                        dispname = val_ir.stype.get_displayname(
+                            ctx.schema)
+                        raise RuntimeError(
+                            f'expected a {desc.type.__name__} value, '
+                            f'got {dispname!r}')
+                    else:
+                        config_vals[name] = val
+
+            else:
+                raise RuntimeError(
+                    f'unsupported SET command type {type(item)!r}')
+
+        return dbstate.SessionStateQuery(
+            session_set_modaliases=immutables.Map(aliases),
+            session_set_configs=immutables.Map(config_vals))
 
     def _compile_ql(self, ctx: CompileContext, ql: qlast.Base):
 
@@ -360,27 +420,9 @@ class Compiler:
         else:
             return self._compile_ql_query(ctx, ql)
 
-    def _compile_single(self, *,
-                        dbver: int,
-                        schema: s_schema.Schema,
-                        eql: str,
-                        sess_modaliases: dict,
-                        sess_vars: dict,
-                        json_mode: bool=False):
-
-        if json_mode:
-            of = pg_compiler.OutputFormat.JSON
-        else:
-            of = pg_compiler.OutputFormat.NATIVE
-
-        ctx = CompileContext(
-            dbver=dbver,
-            original_schema=schema,
-            current_schema=schema,
-            output_format=of,
-            single_query_mode=True,
-            sess_modaliases=sess_modaliases,
-            sess_vars=sess_vars)
+    def _compile_statement(self, *,
+                           ctx: CompileContext,
+                           eql: str):
 
         statements = edgeql.parse_block(eql)
         if len(statements) != 1:
@@ -389,6 +431,29 @@ class Compiler:
         stmt = statements[0]
 
         return self._compile_ql(ctx, stmt)
+
+    def _compile_script(self, *,
+                        ctx: CompileContext,
+                        eql: str):
+
+        statements = edgeql.parse_block(eql)
+        for stmt in statements:
+            comp: dbstate.BaseQuery = self._compile_ql(ctx, stmt)
+
+    def _new_con_state(self, schema, modaliases, config):
+        self._current_db_state = dbstate.DatabaseState(
+            schema, modaliases, config)
+        return self._current_db_state
+
+    def _reset_con_state(self):
+        self._current_db_state = None
+
+    def _load_con_state(self, txid: int):
+        if (self._current_db_state is None or
+                self._current_db_state.current_tx().id != txid):
+            raise RuntimeError(
+                f'failed to lookup transaction with id={txid}')
+        return self._current_db_state
 
     # API
 
@@ -402,18 +467,29 @@ class Compiler:
                           sess_modaliases: immutables.Map,
                           sess_config: immutables.Map,
                           json_mode: bool) -> dbstate.CompiledQuery:
+
+        assert isinstance(sess_modaliases, immutables.Map)
+        assert isinstance(sess_config, immutables.Map)
+
         eql = eql.decode()
         db = await self._get_database(dbver)
 
-        return self._compile_single(
-            dbver=db.dbver,
-            schema=db.schema,
-            eql=eql,
-            sess_modaliases=sess_modaliases,
-            sess_vars=sess_config,
-            json_mode=json_mode)
+        state = self._new_con_state(db.schema, sess_modaliases, sess_config)
 
-    async def compile_eql_in_tx(self, eql: bytes, txid: bytes):
+        if json_mode:
+            of = pg_compiler.OutputFormat.JSON
+        else:
+            of = pg_compiler.OutputFormat.NATIVE
+
+        ctx = CompileContext(
+            dbver=dbver,
+            state=state,
+            output_format=of,
+            single_query_mode=True)
+
+        return self._compile_statement(ctx=ctx, eql=eql)
+
+    async def compile_eql_in_tx(self, eql: bytes, txid: int):
         raise NotImplementedError
 
     async def compile_eql_script(self, dbver: int,
@@ -421,7 +497,11 @@ class Compiler:
                                  sess_modaliases: immutables.Map,
                                  sess_config: immutables.Map,
                                  json_mode: bool) -> dbstate.CompiledQuery:
+
+        assert isinstance(sess_modaliases, immutables.Map)
+        assert isinstance(sess_config, immutables.Map)
+
         raise NotImplementedError
 
-    async def compile_eql_script_in_tx(self, eql: bytes, txid: bytes):
+    async def compile_eql_script_in_tx(self, eql: bytes, txid: int):
         raise NotImplementedError
