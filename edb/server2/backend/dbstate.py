@@ -82,6 +82,32 @@ class TxControlQuery(BaseQuery):
 
 
 @dataclasses.dataclass
+class QueryUnit:
+
+    txid: typing.Optional[int]
+
+    sql: bytes = b''
+    sql_hash: bytes = b''
+
+    has_ddl: bool = False
+
+    commits_tx: bool = False
+    rollbacks_tx: bool = False
+    starts_tx: bool = False
+
+    out_type_data: bytes = b''
+    out_type_id: bytes = b''
+    in_type_data: bytes = b''
+    in_type_id: bytes = b''
+
+    config: typing.Optional[immutables.Map] = None
+    modaliases: typing.Optional[immutables.Map] = None
+
+
+#############################
+
+
+@dataclasses.dataclass
 class TransactionState:
 
     name: str = dataclasses.field(frozen=True)

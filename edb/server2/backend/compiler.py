@@ -399,11 +399,21 @@ class Compiler:
                 raise RuntimeError(
                     f'unsupported SET command type {type(item)!r}')
 
-        return dbstate.SessionStateQuery(
-            session_set_modaliases=immutables.Map(aliases),
-            session_set_configs=immutables.Map(config_vals))
+        aliases = immutables.Map(aliases)
+        config_vals = immutables.Map(config_vals)
 
-    def _compile_ql(self, ctx: CompileContext, ql: qlast.Base):
+        if aliases:
+            ctx.state.update_modaliases(
+                ctx.state.get_modaliases().update(aliases))
+        if config_vals:
+            ctx.state.update_config(
+                ctx.state.get_config().update(config_vals))
+
+        return dbstate.SessionStateQuery(
+            session_set_modaliases=aliases,
+            session_set_configs=config_vals)
+
+    def _compile_dispatch_ql(self, ctx: CompileContext, ql: qlast.Base):
 
         if isinstance(ql, (qlast.Database, qlast.Delta)):
             return self._compile_ql_migration(ctx, ql)
@@ -420,39 +430,86 @@ class Compiler:
         else:
             return self._compile_ql_query(ctx, ql)
 
-    def _compile_statement(self, *,
-                           ctx: CompileContext,
-                           eql: str):
+    def _compile(self, *,
+                 ctx: CompileContext,
+                 eql: str) -> typing.List[dbstate.QueryUnit]:
 
         statements = edgeql.parse_block(eql)
-        if len(statements) != 1:
+
+        if ctx.single_query_mode and len(statements) > 1:
             raise errors.ProtocolError(
                 f'expected one statement, got {len(statements)}')
-        stmt = statements[0]
 
-        return self._compile_ql(ctx, stmt)
+        units = []
+        unit = None
 
-    def _compile_script(self, *,
-                        ctx: CompileContext,
-                        eql: str):
+        txid = None
+        if not ctx.state.current_tx().is_implicit():
+            txid = ctx.state.current_tx().id
 
-        statements = edgeql.parse_block(eql)
         for stmt in statements:
-            comp: dbstate.BaseQuery = self._compile_ql(ctx, stmt)
+            comp: dbstate.BaseQuery = self._compile_dispatch_ql(ctx, stmt)
 
-    def _new_con_state(self, schema, modaliases, config):
+            if unit is None:
+                unit = dbstate.QueryUnit(txid=txid)
+
+            if isinstance(comp, dbstate.Query):
+                unit.sql += comp.sql
+
+                if ctx.single_query_mode:
+                    unit.sql_hash = comp.sql_hash
+
+                    unit.out_type_data = comp.out_type_data
+                    unit.out_type_id = comp.out_type_id
+                    unit.in_type_data = comp.in_type_data
+                    unit.in_type_id = comp.in_type_id
+
+            elif isinstance(comp, dbstate.SimpleQuery):
+                unit.sql += comp.sql
+
+            elif isinstance(comp, dbstate.DDLQuery):
+                unit.sql += comp.sql
+                unit.has_ddl = True
+
+            elif isinstance(comp, dbstate.TxControlQuery):
+                unit.sql += comp.sql
+
+                if comp.action == dbstate.TxAction.START:
+                    unit.starts_tx = True
+                    unit.txid = txid = ctx.state.current_tx().id
+                else:
+                    if comp.action == dbstate.TxAction.COMMIT:
+                        unit.commits_tx = True
+                    else:
+                        unit.rollbacks_tx = True
+
+                    units.append(unit)
+                    unit = None
+
+            elif isinstance(comp, dbstate.SessionStateQuery):
+                unit.config = ctx.state.get_config()
+                unit.modaliases = ctx.state.get_modaliases()
+
+            else:
+                raise RuntimeError('unknown compile state')
+
+        if unit is not None:
+            units.append(unit)
+
+        return units
+
+    def _ctx_new_con_state(self, schema, modaliases, config):
         self._current_db_state = dbstate.DatabaseState(
             schema, modaliases, config)
         return self._current_db_state
 
-    def _reset_con_state(self):
-        self._current_db_state = None
-
-    def _load_con_state(self, txid: int):
+    def _ctx_from_con_state(self, txid: int):
         if (self._current_db_state is None or
                 self._current_db_state.current_tx().id != txid):
+            self._current_db_state = None
             raise RuntimeError(
                 f'failed to lookup transaction with id={txid}')
+
         return self._current_db_state
 
     # API
@@ -467,6 +524,16 @@ class Compiler:
                           sess_modaliases: immutables.Map,
                           sess_config: immutables.Map,
                           json_mode: bool) -> dbstate.CompiledQuery:
+        pass
+
+    async def compile_eql_in_tx(self, eql: bytes, txid: int):
+        raise NotImplementedError
+
+    async def compile_eql_script(self, dbver: int,
+                                 eql: bytes,
+                                 sess_modaliases: immutables.Map,
+                                 sess_config: immutables.Map,
+                                 json_mode: bool) -> dbstate.CompiledQuery:
 
         assert isinstance(sess_modaliases, immutables.Map)
         assert isinstance(sess_config, immutables.Map)
@@ -487,21 +554,7 @@ class Compiler:
             output_format=of,
             single_query_mode=True)
 
-        return self._compile_statement(ctx=ctx, eql=eql)
-
-    async def compile_eql_in_tx(self, eql: bytes, txid: int):
-        raise NotImplementedError
-
-    async def compile_eql_script(self, dbver: int,
-                                 eql: bytes,
-                                 sess_modaliases: immutables.Map,
-                                 sess_config: immutables.Map,
-                                 json_mode: bool) -> dbstate.CompiledQuery:
-
-        assert isinstance(sess_modaliases, immutables.Map)
-        assert isinstance(sess_config, immutables.Map)
-
-        raise NotImplementedError
+        return self._compile_script(ctx=ctx, eql=eql)
 
     async def compile_eql_script_in_tx(self, eql: bytes, txid: int):
         raise NotImplementedError
