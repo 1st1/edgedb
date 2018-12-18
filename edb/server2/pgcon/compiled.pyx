@@ -41,8 +41,9 @@ cdef class CompiledQuery:
                  bint opens_tx=False,
 
                  dict session_set_modaliases=None,
-                 dict session_unset_modaliases=None,
-                 dict session_params=None):
+                 dict session_reset_modaliases=None,
+                 dict session_set_configs=None,
+                 dict session_reset_configs=None):
 
         self.dbver = dbver
         self.out_type_data = out_type_data
@@ -57,8 +58,9 @@ cdef class CompiledQuery:
         self.opens_tx = opens_tx
 
         self.session_set_modaliases = session_set_modaliases
-        self.session_unset_modaliases = session_unset_modaliases
-        self.session_params = session_params
+        self.session_reset_modaliases = session_reset_modaliases
+        self.session_set_configs = session_set_configs
+        self.session_reset_configs = session_reset_configs
 
     def __repr__(self):
         r = (

@@ -17,25 +17,20 @@
 #
 
 
-@cython.final
-@cython.no_gc_clear
-@cython.auto_pickle(True)
-cdef class CompiledQuery:
+import typing
 
-    cdef:
-        readonly uint64_t dbver
-        readonly bytes out_type_data
-        readonly bytes out_type_id
-        readonly bytes in_type_data
-        readonly bytes in_type_id
-        readonly bytes sql
-        readonly bytes sql_hash
+import immutables
 
-        readonly bint has_ddl
-        readonly bint multi_stmt
-        readonly bint opens_tx
 
-        readonly dict session_set_modaliases
-        readonly dict session_reset_modaliases
-        readonly dict session_set_configs
-        readonly dict session_reset_configs
+__all__ = ('configs',)
+
+
+class setting(typing.NamedTuple):
+
+    type: type
+    default: object
+
+
+configs = immutables.Map(
+    __internal_testmode=setting(type=bool, default=False),
+)
