@@ -17,13 +17,11 @@
 #
 
 
-import asyncio
 import os
 import typing
 import urllib.parse
 
 from . import backend
-from . import dbstate
 from . import edgecon
 
 
@@ -62,7 +60,7 @@ class Server:
         self._servers = []
         self._cluster = cluster
 
-        self._dbindex = dbstate.DatabaseIndex()
+        self._dbindex = backend.DatabaseIndex()
 
         self._runstate_dir = runstate_dir
         self._max_backend_connections = max_backend_connections

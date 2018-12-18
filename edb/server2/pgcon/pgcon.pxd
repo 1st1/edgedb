@@ -31,7 +31,6 @@ from edb.server2.pgproto.pgproto cimport (
 from edb.server2.pgproto.debug cimport PG_DEBUG
 
 
-include './compiled.pxd'
 include './stmt_cache.pxd'
 
 

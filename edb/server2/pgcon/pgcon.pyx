@@ -41,7 +41,6 @@ from edb.server2.edgecon cimport edgecon
 import asyncio
 
 
-include './compiled.pyx'
 include './stmt_cache.pyx'
 
 
@@ -82,6 +81,12 @@ cdef class PGProto:
 
         self.backend_pid = -1
         self.backend_secret = -1
+
+    def in_tx(self):
+        return (
+            self.xact_status == PQTRANS_INTRANS or
+            self.xact_status == PQTRANS_INERROR
+        )
 
     def is_connected(self):
         return bool(self.connected and self.transport is not None)
@@ -137,10 +142,16 @@ cdef class PGProto:
                               f'{chr(mtype)!r} message')
                     self.buffer.discard_message()
 
+    async def _exec(self, bytes query):
+        raise NotImplementedError
+
+    async def rollback(self):
+        await self._exec(b'ROLLBACK;')
+
     async def parse_execute(self,
                             bint parse,
                             bint execute,
-                            CompiledQuery query,
+                            object query,
                             edgecon.EdgeConnection edgecon,
                             WriteBuffer bind_data,
                             bint send_sync,

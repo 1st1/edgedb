@@ -26,6 +26,11 @@ from edb.server2 import procpool
 
 from . import compiler
 
+from .dbview import DatabaseIndex
+
+
+__all__ = ('DatabaseIndex', 'BackendManager')
+
 
 class Backend:
 

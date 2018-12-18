@@ -17,6 +17,6 @@
 #
 
 
-from .pgcon import connect, CompiledQuery
+from .pgcon import connect
 
-__all__ = ('connect', 'CompiledQuery')
+__all__ = ('connect',)

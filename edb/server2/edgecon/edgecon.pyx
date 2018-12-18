@@ -23,6 +23,8 @@ from libc.stdint cimport int8_t, uint8_t, int16_t, uint16_t, \
                          int32_t, uint32_t, int64_t, uint64_t, \
                          UINT32_MAX
 
+import immutables
+
 from edb.server2.pgproto cimport hton
 from edb.server2.pgproto.pgproto cimport (
     WriteBuffer,
@@ -152,54 +154,60 @@ cdef class EdgeConnection:
 
     #############
 
-    async def _compile(self, bytes eql):
-        cdef pgcon.CompiledQuery compiled
-        compiled = await self.backend.compiler.call(
-            'compile_eql_stmt', self.dbview.dbver, eql, {}, {}, False)
-        self.dbview.cache_compiled_query(eql, compiled)
-        return compiled
+    async def _compile(self, bytes eql, bint json_mode):
+        if self.dbview.in_tx:
+            return await self.backend.compiler.call(
+                'compile_eql_in_tx',
+                self.dbview.txid,
+                eql,
+                json_mode)
+        else:
+            return await self.backend.compiler.call(
+                'compile_eql',
+                self.dbview.dbver,
+                eql,
+                self.dbview.modaliases,
+                self.dbview.config,
+                json_mode)
 
     async def parse(self):
-        cdef:
-            char mtype
-            pgcon.CompiledQuery compiled
+        json_mode = False
 
-        try:
+        self._last_anon_compiled = None
 
-            self._last_anon_compiled = None
+        stmt_name = self.buffer.read_utf8()
+        if stmt_name:
+            raise errors.UnsupportedFeatureError(
+                'prepared statements are not yet supported')
 
-            stmt_name = self.buffer.read_utf8()
-            if stmt_name:
-                raise errors.UnsupportedFeatureError(
-                    'prepared statements are not yet supported')
+        eql = self.buffer.read_null_str()
+        if not eql:
+            raise errors.BinaryProtocolError('empty query')
 
-            eql = self.buffer.read_null_str()
-            if not eql:
-                raise errors.BinaryProtocolError('empty query')
+        compiled = self.dbview.lookup_compiled_query(eql, json_mode)
+        cached = True
+        if compiled is None:
+            cached = False
+            compiled = await self._compile(eql, json_mode)
 
-            compiled = self.dbview.lookup_compiled_query(eql)
-            if compiled is None:
-                compiled = await self._compile(eql)
+        await self.backend.pgcon.parse_execute(
+            1, 0, compiled, self, None, 0, 0)
 
-            await self.backend.pgcon.parse_execute(
-                1, 0, compiled, self, None, 0, 0)
+        if not cached and compiled.is_preparable():
+            self.dbview.cache_compiled_query(eql, json_mode, compiled)
 
-            self._last_anon_compiled = compiled
+        self._last_anon_compiled = compiled
 
-            buf = WriteBuffer.new_message(b'1')  # ParseComplete
-            buf.write_bytes(compiled.in_type_id)
-            buf.write_bytes(compiled.out_type_id)
-            buf.end_message()
+        buf = WriteBuffer.new_message(b'1')  # ParseComplete
+        buf.write_bytes(compiled.in_type_id)
+        buf.write_bytes(compiled.out_type_id)
+        buf.end_message()
 
-            self.write(buf)
-
-        except Exception as ex:
-            # Write error back immediately
-            self.write_error(ex)
+        self.write(buf)
 
     #############
 
-    cdef make_describe_response(self, pgcon.CompiledQuery compiled):
+    cdef make_describe_response(self, compiled):
         cdef:
             WriteBuffer msg
 
@@ -223,36 +231,30 @@ cdef class EdgeConnection:
             char rtype
             WriteBuffer msg
 
-        try:
-            rtype = self.buffer.read_byte()
-            if rtype == b'T':
-                # describe "type id"
-                stmt_name = self.buffer.read_utf8()
+        rtype = self.buffer.read_byte()
+        if rtype == b'T':
+            # describe "type id"
+            stmt_name = self.buffer.read_utf8()
 
-                if stmt_name:
-                    raise errors.UnsupportedFeatureError(
-                        'prepared statements are not yet supported')
-                else:
-                    if self._last_anon_compiled is None:
-                        raise errors.TypeSpecNotFoundError(
-                            'no prepared anonymous statement found')
-
-                    msg = self.make_describe_response(self._last_anon_compiled)
-                    self.write(msg)
-
+            if stmt_name:
+                raise errors.UnsupportedFeatureError(
+                    'prepared statements are not yet supported')
             else:
-                raise errors.BinaryProtocolError(
-                    f'unsupported "describe" message mode {chr(rtype)!r}')
+                if self._last_anon_compiled is None:
+                    raise errors.TypeSpecNotFoundError(
+                        'no prepared anonymous statement found')
 
-        except Exception as ex:
-            # Write error back immediately
-            self.write_error(ex)
+                msg = self.make_describe_response(self._last_anon_compiled)
+                self.write(msg)
+
+        else:
+            raise errors.BinaryProtocolError(
+                f'unsupported "describe" message mode {chr(rtype)!r}')
 
     async def execute(self):
         cdef:
             WriteBuffer bound_args_buf
             bint send_sync
-            pgcon.CompiledQuery compiled
 
         stmt_name = self.buffer.read_utf8()
         bind_args = self.buffer.consume_message()
@@ -277,10 +279,22 @@ cdef class EdgeConnection:
             send_sync = True
             self.buffer.finish_message()
 
-        await self.backend.pgcon.parse_execute(
-            0, 1, compiled,
-            self, bound_args_buf,
-            send_sync, 0)
+        self.dbview.start(compiled)
+        if compiled.sql:
+            try:
+                await self.backend.pgcon.parse_execute(
+                    0, 1, compiled,
+                    self, bound_args_buf,
+                    send_sync, 0)
+            except Exception:
+                self.dbview.on_error(compiled)
+                raise
+            else:
+                self.dbview.on_success(compiled)
+        else:
+            # SET command or something else that doesn't involve
+            # executing SQL.
+            self.dbview.on_success(compiled)
 
         self.write(WriteBuffer.new_message(b'C').end_message())
 
@@ -295,7 +309,8 @@ cdef class EdgeConnection:
             bytes in_tid
             bytes out_tid
             bytes bound_args
-            pgcon.CompiledQuery compiled
+
+        json_mode = False
 
         query = self.buffer.read_null_str()
         in_tid = self.buffer.read_bytes(16)
@@ -305,7 +320,7 @@ cdef class EdgeConnection:
         if not query:
             raise errors.BinaryProtocolError('empty query')
 
-        compiled = self.dbview.lookup_compiled_query(query)
+        compiled = self.dbview.lookup_compiled_query(query, json_mode)
         if (compiled is None or
                 compiled.in_type_id != in_tid or
                 compiled.out_type_id != out_tid):
@@ -314,8 +329,13 @@ cdef class EdgeConnection:
             # outdated information about type specs.
 
             # Check if we need to compile this query.
+            cached = True
             if compiled is None:
-                compiled = await self._compile(query)
+                cached = False
+                compiled = await self._compile(query, json_mode)
+
+            if not cached and compiled.is_preparable():
+                self.dbview.cache_compiled_query(query, json_mode, compiled)
 
             send_sync = False
             if self.buffer.take_message_type(b'S'):
@@ -324,8 +344,18 @@ cdef class EdgeConnection:
                 send_sync = True
                 self.buffer.finish_message()
 
-            await self.backend.pgcon.parse_execute(
-                1, 0, compiled, self, None, 0, 0)
+            self.dbview.start(compiled)
+            if compiled.sql:
+                try:
+                    await self.backend.pgcon.parse_execute(
+                        1, 0, compiled, self, None, 0, 0)
+                except Exception:
+                    self.dbview.on_error(compiled)
+                    raise
+                else:
+                    self.dbview.on_success(compiled)
+            else:
+                self.dbview.on_success(compiled)
 
             self.write(self.make_describe_response(compiled))
             if send_sync:
@@ -354,11 +384,20 @@ cdef class EdgeConnection:
                 send_sync = True
                 self.buffer.finish_message()
 
-            await self.backend.pgcon.parse_execute(
-                1, 1,
-                compiled, self,
-                self.recode_bind_args(bound_args),
-                send_sync, 1)
+            if compiled.sql:
+                try:
+                    await self.backend.pgcon.parse_execute(
+                        1, 1,
+                        compiled, self,
+                        self.recode_bind_args(bound_args),
+                        send_sync, compiled.is_preparable())
+                except Exception:
+                    self.dbview.on_error(compiled)
+                    raise
+                else:
+                    self.dbview.on_success(compiled)
+            else:
+                self.dbview.on_success(compiled)
 
             if send_sync:
                 self.write(self.pgcon_last_sync_status())
@@ -421,7 +460,16 @@ cdef class EdgeConnection:
                         self.fallthrough(False)
 
                 except Exception as ex:
+                    if self.dbview.in_tx:
+                        self.dbview.rollback()
+
+                    if self.backend.pgcon.in_tx():
+                        await self.backend.pgcon.rollback()
+
+                    self.write_error(ex)
+
                     self.buffer.finish_message()
+
                     await self.recover_from_error()
 
                 else:

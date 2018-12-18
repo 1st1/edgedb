@@ -47,7 +47,6 @@ from edb.lang.schema import delta as s_delta
 from edb.lang.schema import deltas as s_deltas
 from edb.lang.schema import error as s_err
 from edb.lang.schema import schema as s_schema
-from edb.lang.schema import std as s_std
 from edb.lang.schema import types as s_types
 
 from edb.server.pgsql import delta as pg_delta
@@ -67,8 +66,7 @@ class CompilerDatabaseState(typing.NamedTuple):
 
 class CompileContext(typing.NamedTuple):
 
-    dbver: int
-    state: dbstate.ConnectionState
+    state: dbstate.CompilerConnectionState
     output_format: pg_compiler.OutputFormat
     single_query_mode: bool
 
@@ -105,7 +103,7 @@ class Compiler:
             im = intromech.IntrospectionMech(con)
             schema = await im.readschema(
                 schema=self._get_std_schema(),
-                exclude_modules=s_std.STD_MODULES)
+                exclude_modules=s_schema.STD_MODULES)
 
             db = CompilerDatabaseState(
                 dbver=dbver,
@@ -229,7 +227,6 @@ class Compiler:
             self, ctx: CompileContext, cmd) -> dbstate.BaseQuery:
 
         current_tx = ctx.state.current_tx()
-
         schema = current_tx.get_schema()
         context = s_delta.CommandContext()
 
@@ -246,9 +243,11 @@ class Compiler:
 
             elif isinstance(cmd, s_deltas.GetDelta):
                 delta_ql = s_ddl.ddl_text_from_delta(schema, delta)
-                return self._compile_statement(
-                    ctx=ctx,
-                    eql=f'SELECT {ql_quote.quote_literal(delta_ql)};')
+                query_ql = qlast.SelectQuery(
+                    result=qlast.StringConstant(
+                        quote="'",
+                        value=ql_quote.escape_string(delta_ql)))
+                return self._compile_ql_query(ctx, query_ql)
 
             elif isinstance(cmd, s_deltas.CreateDelta):
                 schema, _ = cmd.apply(schema, context)
@@ -303,21 +302,27 @@ class Compiler:
             raise RuntimeError(f'unexpected plan {cmd!r}')
 
     def _compile_ql_ddl(self, ctx: CompileContext, ql: qlast.DDL):
+        current_tx = ctx.state.current_tx()
+        schema = current_tx.get_schema()
+
         cmd = s_ddl.delta_from_ddl(
             ql,
-            schema=ctx.schema,
-            modaliases=ctx.sess_modaliases,
-            testmode=bool(ctx.sess_modaliases.get('__internal_testmode')))
+            schema=schema,
+            modaliases=current_tx.get_modaliases(),
+            testmode=bool(current_tx.get_config().get('__internal_testmode')))
 
         return self._compile_command(cmd)
 
     def _compile_ql_migration(self, ctx: CompileContext,
                               ql: typing.Union[qlast.Database, qlast.Delta]):
+        current_tx = ctx.state.current_tx()
+        schema = current_tx.get_schema()
+
         cmd = s_ddl.cmd_from_ddl(
             ql,
-            schema=ctx.schema,
-            modaliases=ctx.sess_modaliases,
-            testmode=bool(ctx.sess_modaliases.get('__internal_testmode')))
+            schema=schema,
+            modaliases=current_tx.get_modaliases(),
+            testmode=bool(current_tx.get_config().get('__internal_testmode')))
 
         if (isinstance(ql, qlast.CreateDelta) and
                 cmd.get_attribute_value('target')):
@@ -353,20 +358,21 @@ class Compiler:
 
     def _compile_ql_sess_state(self, ctx: CompileContext,
                                ql: qlast.SetSessionState):
+        current_tx = ctx.state.current_tx()
+        schema = current_tx.get_schema()
+
         aliases = {}
         config_vals = {}
 
         for item in ql.items:
             if isinstance(item, qlast.SessionSettingModuleDecl):
                 try:
-                    module = ctx.schema.get(item.module)
+                    schema.get(item.module)
                 except s_err.ItemNotFoundError:
-                    raise errors.EdgeQLError(
-                        f'module {item.module!r} does not exist',
-                        context=item.context
-                    )
+                    raise errors.InvalidReferenceError(
+                        f'module {item.module!r} does not exist')
 
-                aliases[item.alias] = module
+                aliases[item.alias] = item.module
 
             elif isinstance(item, qlast.SessionSettingConfigDecl):
                 name = item.alias
@@ -374,22 +380,21 @@ class Compiler:
                 try:
                     desc = config.configs[name]
                 except KeyError:
-                    raise RuntimeError(
+                    raise errors.ConfigurationError(
                         f'invalid SET expression: '
                         f'unknown CONFIG setting {name!r}')
 
                 try:
                     val_ir = ql_compiler.compile_ast_fragment_to_ir(
-                        item.expr, schema=ctx.schema)
+                        item.expr, schema=schema)
                     val = ireval.evaluate_to_python_val(
-                        val_ir, schema=ctx.schema)
+                        val_ir, schema=schema)
                 except ireval.StaticEvaluationError:
                     raise RuntimeError('invalid SET expression')
                 else:
                     if not isinstance(val, desc.type):
-                        dispname = val_ir.stype.get_displayname(
-                            ctx.schema)
-                        raise RuntimeError(
+                        dispname = val_ir.stype.get_displayname(schema)
+                        raise errors.ConfigurationError(
                             f'expected a {desc.type.__name__} value, '
                             f'got {dispname!r}')
                     else:
@@ -403,15 +408,15 @@ class Compiler:
         config_vals = immutables.Map(config_vals)
 
         if aliases:
-            ctx.state.update_modaliases(
-                ctx.state.get_modaliases().update(aliases))
+            ctx.state.current_tx().update_modaliases(
+                ctx.state.current_tx().get_modaliases().update(aliases))
         if config_vals:
-            ctx.state.update_config(
-                ctx.state.get_config().update(config_vals))
+            ctx.state.current_tx().update_config(
+                ctx.state.current_tx().get_config().update(config_vals))
 
         return dbstate.SessionStateQuery(
-            session_set_modaliases=aliases,
-            session_set_configs=config_vals)
+            sess_set_modaliases=aliases,
+            sess_set_config=config_vals)
 
     def _compile_dispatch_ql(self, ctx: CompileContext, ql: qlast.Base):
 
@@ -424,7 +429,7 @@ class Compiler:
         elif isinstance(ql, qlast.Transaction):
             return self._compile_ql_transaction(ctx, ql)
 
-        elif isinstance(ql, qlast.SessionStateDecl):
+        elif isinstance(ql, qlast.SetSessionState):
             return self._compile_ql_sess_state(ctx, ql)
 
         else:
@@ -451,7 +456,7 @@ class Compiler:
             comp: dbstate.BaseQuery = self._compile_dispatch_ql(ctx, stmt)
 
             if unit is None:
-                unit = dbstate.QueryUnit(txid=txid)
+                unit = dbstate.QueryUnit(txid=txid, dbver=ctx.state.dbver)
 
             if isinstance(comp, dbstate.Query):
                 unit.sql += comp.sql
@@ -487,8 +492,8 @@ class Compiler:
                     unit = None
 
             elif isinstance(comp, dbstate.SessionStateQuery):
-                unit.config = ctx.state.get_config()
-                unit.modaliases = ctx.state.get_modaliases()
+                unit.config = ctx.state.current_tx().get_config()
+                unit.modaliases = ctx.state.current_tx().get_modaliases()
 
             else:
                 raise RuntimeError('unknown compile state')
@@ -498,19 +503,52 @@ class Compiler:
 
         return units
 
-    def _ctx_new_con_state(self, schema, modaliases, config):
-        self._current_db_state = dbstate.DatabaseState(
-            schema, modaliases, config)
-        return self._current_db_state
+    async def _ctx_new_con_state(self, dbver: int, json_mode: bool,
+                                 single_query_mode: bool,
+                                 modaliases, config):
 
-    def _ctx_from_con_state(self, txid: int):
+        assert isinstance(modaliases, immutables.Map)
+        assert isinstance(config, immutables.Map)
+
+        db = await self._get_database(dbver)
+        self._current_db_state = dbstate.CompilerConnectionState(
+            dbver, db.schema, modaliases, config)
+
+        state = self._current_db_state
+
+        if json_mode:
+            of = pg_compiler.OutputFormat.JSON
+        else:
+            of = pg_compiler.OutputFormat.NATIVE
+
+        ctx = CompileContext(
+            state=state,
+            output_format=of,
+            single_query_mode=single_query_mode)
+
+        return ctx
+
+    async def _ctx_from_con_state(self, txid: int, json_mode: bool,
+                                  single_query_mode: bool):
         if (self._current_db_state is None or
                 self._current_db_state.current_tx().id != txid):
             self._current_db_state = None
             raise RuntimeError(
                 f'failed to lookup transaction with id={txid}')
 
-        return self._current_db_state
+        state = self._current_db_state
+
+        if json_mode:
+            of = pg_compiler.OutputFormat.JSON
+        else:
+            of = pg_compiler.OutputFormat.NATIVE
+
+        ctx = CompileContext(
+            state=state,
+            output_format=of,
+            single_query_mode=single_query_mode)
+
+        return ctx
 
     # API
 
@@ -519,42 +557,70 @@ class Compiler:
         self._cached_db = None
         await self._get_database(dbver)
 
-    async def compile_eql(self, dbver: int,
-                          eql: bytes,
-                          sess_modaliases: immutables.Map,
-                          sess_config: immutables.Map,
-                          json_mode: bool) -> dbstate.CompiledQuery:
-        pass
+    async def compile_eql(
+            self,
+            dbver: int,
+            eql: bytes,
+            sess_modaliases: immutables.Map,
+            sess_config: immutables.Map,
+            json_mode: bool) -> dbstate.QueryUnit:
 
-    async def compile_eql_in_tx(self, eql: bytes, txid: int):
-        raise NotImplementedError
-
-    async def compile_eql_script(self, dbver: int,
-                                 eql: bytes,
-                                 sess_modaliases: immutables.Map,
-                                 sess_config: immutables.Map,
-                                 json_mode: bool) -> dbstate.CompiledQuery:
-
-        assert isinstance(sess_modaliases, immutables.Map)
-        assert isinstance(sess_config, immutables.Map)
+        ctx = await self._ctx_new_con_state(
+            dbver=dbver,
+            json_mode=json_mode,
+            single_query_mode=True,
+            modaliases=sess_modaliases,
+            config=sess_config)
 
         eql = eql.decode()
-        db = await self._get_database(dbver)
+        units = self._compile(ctx=ctx, eql=eql)
 
-        state = self._new_con_state(db.schema, sess_modaliases, sess_config)
+        assert len(units) == 1
+        return units[0]
 
-        if json_mode:
-            of = pg_compiler.OutputFormat.JSON
-        else:
-            of = pg_compiler.OutputFormat.NATIVE
+    async def compile_eql_in_tx(
+            self,
+            txid: int,
+            eql: bytes,
+            json_mode: bool) -> dbstate.QueryUnit:
 
-        ctx = CompileContext(
-            dbver=dbver,
-            state=state,
-            output_format=of,
+        ctx = await self._ctx_from_con_state(
+            txid=txid,
+            json_mode=json_mode,
             single_query_mode=True)
 
-        return self._compile_script(ctx=ctx, eql=eql)
+        units = self._compile(ctx=ctx, eql=eql)
 
-    async def compile_eql_script_in_tx(self, eql: bytes, txid: int):
-        raise NotImplementedError
+        assert len(units) == 1
+        return units[0]
+
+    async def compile_eql_script(
+            self,
+            dbver: int,
+            eql: bytes,
+            sess_modaliases: immutables.Map,
+            sess_config: immutables.Map,
+            json_mode: bool) -> typing.List[dbstate.QueryUnit]:
+
+        ctx = await self._ctx_new_con_state(
+            dbver=dbver,
+            json_mode=json_mode,
+            single_query_mode=False,
+            modaliases=sess_modaliases,
+            config=sess_config)
+
+        eql = eql.decode()
+        return self._compile(ctx=ctx, eql=eql)
+
+    async def compile_eql_script_in_tx(
+            self,
+            txid: int,
+            eql: bytes,
+            json_mode: bool) -> typing.List[dbstate.QueryUnit]:
+
+        ctx = await self._ctx_from_con_state(
+            txid=txid,
+            json_mode=json_mode,
+            single_query_mode=False)
+
+        return self._compile(ctx=ctx, eql=eql)
