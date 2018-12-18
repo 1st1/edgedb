@@ -84,6 +84,7 @@ class TxControlQuery(BaseQuery):
 @dataclasses.dataclass
 class QueryUnit:
 
+    dbver: int
     txid: typing.Optional[int]
 
     sql: bytes = b''
@@ -103,6 +104,18 @@ class QueryUnit:
     config: typing.Optional[immutables.Map] = None
     modaliases: typing.Optional[immutables.Map] = None
 
+    def is_preparable(self):
+        """Answers the question: can this query be prepared and cached?"""
+        prep = bool(self.sql and self.sql_hash and self.out_type_data)
+
+        assert not prep or (not self.config and
+                            not self.modaliases and
+                            not self.has_ddl and
+                            not self.commits_tx and
+                            not self.rollbacks_tx and
+                            not self.starts_tx)
+        return prep
+
 
 #############################
 
@@ -110,7 +123,7 @@ class QueryUnit:
 @dataclasses.dataclass
 class TransactionState:
 
-    name: str = dataclasses.field(frozen=True)
+    name: str
     schema: s_schema.Schema
     modaliases: immutables.Map
     config: immutables.Map
@@ -184,10 +197,13 @@ class Transaction:
         self._stack[-1].config = new_config
 
 
-class ConnectionState:
+class CompilerConnectionState:
 
-    def __init__(self, schema: s_schema.Schema,
-                 modaliases: immutables.Map, config: immutables.Map):
+    def __init__(self, dbver: int,
+                 schema: s_schema.Schema,
+                 modaliases: immutables.Map,
+                 config: immutables.Map):
+        self._dbver = dbver
         self._schema = schema
         self._modaliases = modaliases
         self._config = config
@@ -196,6 +212,10 @@ class ConnectionState:
     def _init_current_tx(self):
         self._current_tx = Transaction(
             self._schema, self._modaliases, self._config)
+
+    @property
+    def dbver(self):
+        return self._dbver
 
     def current_tx(self) -> Transaction:
         return self._current_tx

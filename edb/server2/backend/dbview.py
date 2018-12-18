@@ -20,19 +20,21 @@
 import time
 import typing
 
-from edb.server import defines
-from edb.server2.pgcon import CompiledQuery
+import immutables
 
+from edb.server import defines
 from edb.lang.common import lru
 
+from . import dbstate
 
-__all__ = ('CompiledQuery', 'DatabaseIndex', 'DatabaseConnectionView')
+
+__all__ = ('DatabaseIndex', 'DatabaseConnectionView')
 
 
 class Database:
 
     # Global LRU cache of compiled anonymous queries
-    _eql_to_compiled: typing.Mapping[bytes, CompiledQuery]
+    _eql_to_compiled: typing.Mapping[bytes, dbstate.QueryUnit]
 
     def __init__(self, name):
         self._name = name
@@ -48,13 +50,16 @@ class Database:
     def _invalidate_caches(self):
         self._eql_to_compiled.clear()
 
-    def _cache_compiled_query(self, eql: bytes, compiled: CompiledQuery):
-        existing = self._eql_to_compiled.get(eql)
+    def _cache_compiled_query(self, eql: bytes, json_mode: bool,
+                              compiled: dbstate.QueryUnit):
+        assert compiled.is_preparable()
+        key = (eql, json_mode)
+        existing = self._eql_to_compiled.get(key)
         if existing is not None and existing.dbver > compiled.dbver:
             # We already have a cached query for a more recent DB version.
             return
 
-        self._eql_to_compiled[eql] = compiled
+        self._eql_to_compiled[key] = compiled
 
     def _new_view(self, *, user):
         return DatabaseConnectionView(self, user=user)
@@ -62,15 +67,19 @@ class Database:
 
 class DatabaseConnectionView:
 
-    _eql_to_compiled: typing.Mapping[bytes, CompiledQuery]
+    _eql_to_compiled: typing.Mapping[bytes, dbstate.QueryUnit]
 
-    def __init__(self, db, *, user):
+    def __init__(self, db: Database, *, user):
         self._db = db
 
         self._in_tx = False
         self._in_tx_with_ddl = False
+        self._txid = None
 
         self._user = user
+
+        self._config = immutables.Map()
+        self._modaliases = immutables.Map()
 
         # Whenever we are in a transaction that had executed a
         # DDL command, we use this cache for compiled queries.
@@ -79,6 +88,22 @@ class DatabaseConnectionView:
 
     def _invalidate_local_cache(self):
         self._eql_to_compiled.clear()
+
+    def _reset_tx(self):
+        self._txid = None
+        self._in_tx = False
+        self._in_tx_with_ddl = False
+
+    def rollback(self):
+        self._reset_tx()
+
+    @property
+    def config(self):
+        return self._config
+
+    @property
+    def modaliases(self):
+        return self._modaliases
 
     @property
     def in_tx(self):
@@ -96,73 +121,56 @@ class DatabaseConnectionView:
     def dbname(self):
         return self._db._name
 
-    def lookup_compiled_query(
-            self, eql: bytes) -> typing.Optional[CompiledQuery]:
+    def cache_compiled_query(self, eql: bytes,
+                             json_mode: bool,
+                             compiled: dbstate.QueryUnit):
+        if self._in_tx_with_ddl:
+            self._eql_to_compiled[(eql, json_mode)] = compiled
+        else:
+            self._db._cache_compiled_query(eql, json_mode, compiled)
 
-        compiled: CompiledQuery
+    def lookup_compiled_query(
+            self, eql: bytes,
+            json_mode: bool) -> typing.Optional[dbstate.QueryUnit]:
+
+        compiled: dbstate.QueryUnit
+        key = (eql, json_mode)
 
         if self._in_tx_with_ddl:
-            compiled = self._eql_to_compiled.get(eql)
+            compiled = self._eql_to_compiled.get(key)
         else:
-            compiled = self._db._eql_to_compiled.get(eql)
+            compiled = self._db._eql_to_compiled.get(key)
             if compiled is not None and compiled.dbver != self.dbver:
                 compiled = None
 
         return compiled
 
-    def cache_compiled_query(self, eql: bytes, compiled: CompiledQuery):
-        if self._in_tx_with_ddl:
-            self._eql_to_compiled[eql] = compiled
-        else:
-            self._db._cache_compiled_query(eql, compiled)
+    def start(self, qu: dbstate.QueryUnit):
+        self._txid = qu.txid
+        if qu.starts_tx:
+            self._in_tx = True
+            if qu.has_ddl:
+                self._in_tx_with_ddl
 
-    def signal_ddl(self):
-        if self._in_tx:
-            # In a transaction, record that there was a DDL
-            # statement.
-            self._in_tx_with_ddl = True
-        else:
-            # Not in a transaction; executed DDL affects all
-            # connections immediately.
-            self._db._signal_ddl()
+    def on_error(self, qu: dbstate.QueryUnit):
+        self._reset_tx()
 
-        # Whenever we execute a DDL statement (in transaction or not)
-        # we want to invalidate local caches (i.e. caches for this
-        # particular connection).
-        self._invalidate_local_cache()
+    def on_success(self, qu: dbstate.QueryUnit):
+        if qu.commits_tx:
+            assert self._in_tx
+            if self._in_tx_with_ddl:
+                self._db._signal_ddl()
+            self._reset_tx()
 
-    def tx_begin(self):
-        if self._in_tx:
-            raise RuntimeError('cannot begin; already in transaction')
+        elif qu.rollbacks_tx:
+            assert self._in_tx
+            self._reset_tx()
 
-        self._in_tx = True
+        if qu.config:
+            self._config = qu.config
 
-    def tx_commit(self):
-        if not self._in_tx:
-            raise RuntimeError('cannot commit; not in transaction')
-
-        if self._in_tx_with_ddl:
-            # This transaction had DDL commands in it:
-            # signal that to all connections; invalidate all local
-            # caches (any compiled query will have to be recompiled
-            # anyways because of global DB version bump.)
-            self._db._signal_ddl()
-            self._invalidate_local_cache()
-
-        self._in_tx = False
-        self._in_tx_with_ddl = False
-
-    def tx_rollback(self):
-        if not self._in_tx:
-            raise RuntimeError('cannot rollback; not in transaction')
-
-        if self._in_tx_with_ddl:
-            # We no longer need our local anonymous queries
-            # cache: invalidate it.
-            self._invalidate_local_cache()
-
-        self._in_tx = False
-        self._in_tx_with_ddl = False
+        if qu.modaliases:
+            self._modaliases = qu.modaliases
 
 
 class DatabaseIndex:
