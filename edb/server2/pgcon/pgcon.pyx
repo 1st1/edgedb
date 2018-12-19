@@ -26,6 +26,8 @@ from libc.stdint cimport int8_t, uint8_t, int16_t, uint16_t, \
 
 from edb.server import defines
 
+from edb.server.pgsql import common as pg_common
+
 from edb.server2.pgproto cimport hton
 from edb.server2.pgproto.pgproto cimport (
     WriteBuffer,
@@ -141,12 +143,6 @@ cdef class PGProto:
                         print(f'PGCon.wait_for_sync: discarding '
                               f'{chr(mtype)!r} message')
                     self.buffer.discard_message()
-
-    async def _exec(self, bytes query):
-        raise NotImplementedError
-
-    async def rollback(self):
-        await self._exec(b'ROLLBACK;')
 
     async def parse_execute(self,
                             bint parse,
@@ -291,7 +287,7 @@ cdef class PGProto:
             if send_sync:
                 await self.wait_for_sync()
 
-    async def simple_query(self, bytes sql, bint ignore_result):
+    async def simple_query(self, bytes sql, bint ignore_data):
         cdef:
             WriteBuffer packet
             WriteBuffer buf
@@ -304,7 +300,7 @@ cdef class PGProto:
 
         exc = None
 
-        if ignore_result:
+        if ignore_data:
             result = None
         else:
             result = []
@@ -318,7 +314,7 @@ cdef class PGProto:
 
             try:
                 if mtype == b'D':
-                    if ignore_result:
+                    if ignore_data:
                         self.buffer.discard_message()
                     else:
                         ncol = self.buffer.read_int16()
@@ -383,6 +379,10 @@ cdef class PGProto:
 
         buf.write_bytestring(b'edgedb_use_typeoids')
         buf.write_bytestring(b'false')
+
+        buf.write_bytestring(b'search_path')
+        buf.write_utf8('edgedb, {}'.format(
+            pg_common._edgedb_module_name_to_schema_name('std')))
 
         buf.write_utf8('user')
         buf.write_utf8(defines.EDGEDB_SUPERUSER)

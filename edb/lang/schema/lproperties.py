@@ -19,9 +19,10 @@
 
 from edb.lang.edgeql import ast as qlast
 
+from edb import errors
+
 from . import constraints
 from . import delta as sd
-from . import error as s_err
 from . import inheriting
 from . import name as sn
 from . import objects as so
@@ -190,7 +191,7 @@ class CreateProperty(PropertyCommand,
             if (not isinstance(target_type, (scalars.ScalarType,
                                              types.Collection)) or
                     target_type.is_polymorphic(schema)):
-                raise s_err.SchemaDefinitionError(
+                raise errors.SchemaDefinitionError(
                     f'invalid property target, expected primitive type, '
                     f'got {target_type.get_displayname(schema)!r}',
                     context=target.context

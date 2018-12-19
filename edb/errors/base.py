@@ -17,19 +17,42 @@
 #
 
 
+import typing
+
+from edb.lang.common import exceptions as ex
+
+
 __all__ = (
     'EdgeDBError',
 )
 
 
-class EdgeDBError(Exception):
+class EdgeDBErrorMeta(type):
+    _error_map = {}
+
+    def __new__(mcls, name, bases, dct):
+        cls = super().__new__(mcls, name, bases, dct)
+
+        code = dct.get('_code')
+        if code is not None:
+            mcls._error_map[code] = cls
+
+        return cls
+
+
+class EdgeDBError(Exception, metaclass=EdgeDBErrorMeta):
 
     _code = None
+    _attrs: typing.Mapping[str, str]
 
-    def __init__(self, msg: str, *, details: str=None):
+    def __init__(self, msg: str, *,
+                 hint: str=None, details: str=None, context=None, **kwargs):
         if type(self) is EdgeDBError:
             raise RuntimeError(
                 'EdgeDBError is not supposed to be instantiated directly')
+
+        self._attrs = {}
+
         if details:
             msg = f'{msg}\n\nDETAILS: {details}'
         super().__init__(msg)
@@ -39,3 +62,43 @@ class EdgeDBError(Exception):
         if cls._code is None:
             raise RuntimeError('EdgeDB exception code is not set')
         return cls._code
+
+    def set_hint_and_details(self, hint, details=None):
+        ex.replace_context(
+            self, ex.DefaultExceptionContext(hint=hint, details=details))
+
+        if hint is not None:
+            self._attrs['H'] = hint
+        if details is not None:
+            self._attrs['D'] = details
+
+    def set_source_context(self, context):
+        ex.replace_context(self, context)
+
+        if context.start is not None:
+            self._attrs['P'] = str(context.start.pointer)
+            self._attrs['p'] = str(context.end.pointer)
+
+    @property
+    def attrs(self):
+        return self._attrs
+
+    @property
+    def position(self):
+        return int(self._attrs.get('P'))
+
+    @property
+    def hint(self):
+        return self._attrs.get('H')
+
+    @property
+    def details(self):
+        return self._attrs.get('D')
+
+    def as_text(self):
+        buffer = ''
+
+        for context in ex.iter_contexts(self):
+            buffer += context.as_text()
+
+        return buffer

@@ -29,7 +29,7 @@ from edb.lang import edgeql
 from edb.lang.edgeql import ast as qlast
 from edb.lang.schema import ast as esast
 
-from ...error import SchemaSyntaxError
+from edb.errors import SchemaSyntaxError
 
 from . import keywords
 from . import tokens

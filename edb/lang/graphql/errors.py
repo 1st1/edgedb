@@ -17,10 +17,13 @@
 #
 
 
-from edb.lang.common.exceptions import EdgeDBError, add_context
+from edb import errors
 
 
-class GraphQLError(EdgeDBError):
+from edb.lang.common.exceptions import add_context
+
+
+class GraphQLError(errors.QueryError):
     pass
 
 

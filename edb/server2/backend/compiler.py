@@ -45,7 +45,6 @@ from edb.lang.schema import database as s_db
 from edb.lang.schema import ddl as s_ddl
 from edb.lang.schema import delta as s_delta
 from edb.lang.schema import deltas as s_deltas
-from edb.lang.schema import error as s_err
 from edb.lang.schema import schema as s_schema
 from edb.lang.schema import types as s_types
 
@@ -136,7 +135,16 @@ class Compiler:
             h.update(val)
         return h.hexdigest().encode('latin1')
 
-    def _process_delta(self, delta, schema):
+    def _new_delta_context(self, ctx: CompileContext):
+        current_tx = ctx.state.current_tx()
+        config = current_tx.get_config()
+
+        context = s_delta.CommandContext()
+        context.testmode = bool(config.get('__internal_testmode'))
+
+        return context
+
+    def _process_delta(self, ctx: CompileContext, delta, schema):
         """Adapt and process the delta command."""
 
         if debug.flags.delta_plan:
@@ -144,7 +152,7 @@ class Compiler:
             debug.dump(delta, schema=schema)
 
         delta = pg_delta.CommandMeta.adapt(delta)
-        context = pg_delta.CommandContext(self.connection)
+        context = self._new_delta_context(ctx)
         schema, _ = delta.apply(schema, context)
 
         if debug.flags.delta_pgsql_plan:
@@ -229,7 +237,7 @@ class Compiler:
 
         current_tx = ctx.state.current_tx()
         schema = current_tx.get_schema()
-        context = s_delta.CommandContext()
+        context = self._new_delta_context(ctx)
 
         if isinstance(cmd, s_deltas.CreateDelta):
             delta = None
@@ -269,14 +277,12 @@ class Compiler:
         # Do a dry-run on test_schema to canonicalize
         # the schema delta-commands.
         test_schema = schema
-        context = s_delta.CommandContext()
+        context = self._new_delta_context(ctx)
         cmd.apply(test_schema, context=context)
 
         # Apply and adapt delta, build native delta plan, which
         # will also update the schema.
-        schema, plan = self._process_delta(cmd, schema)
-
-        context = pg_delta.CommandContext(self.connection)
+        schema, plan = self._process_delta(ctx, cmd, schema)
 
         if isinstance(plan, (s_db.CreateDatabase, s_db.DropDatabase)):
             block = pg_dbops.SQLBlock()
@@ -369,9 +375,9 @@ class Compiler:
             if isinstance(item, qlast.SessionSettingModuleDecl):
                 try:
                     schema.get(item.module)
-                except s_err.ItemNotFoundError:
-                    raise errors.InvalidReferenceError(
-                        f'module {item.module!r} does not exist')
+                except errors.InvalidReferenceError:
+                    raise errors.UnknownModuleError(
+                        f'module {item.module!r} does not exist') from None
 
                 aliases[item.alias] = item.module
 

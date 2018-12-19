@@ -20,7 +20,8 @@
 """EdgeQL to IR compiler."""
 
 
-from edb.lang.edgeql import errors as ql_errors
+from edb import errors
+
 from edb.lang.edgeql import parser as ql_parser
 
 from edb.lang.common import debug
@@ -67,7 +68,7 @@ def compile_ast_fragment_to_ir(tree,
     ir_set = dispatch.compile(tree, ctx=ctx)
     try:
         result_type = inference.infer_type(ir_set, ctx.env)
-    except ql_errors.EdgeQLError:
+    except errors.QueryError:
         # Not all fragments can be resolved into a concrete type,
         # that's OK.
         result_type = None
@@ -134,7 +135,7 @@ def compile_ast_to_ir(tree,
             if args_decnames != args_tpl:
                 missing_args = args_tpl - args_decnames
                 missing_args_repr = ', '.join(f'${a}' for a in missing_args)
-                raise ql_errors.EdgeQLError(
+                raise errors.QueryError(
                     f'missing {missing_args_repr} positional argument'
                     f'{"s" if len(missing_args) > 1 else ""}')
 
@@ -168,7 +169,7 @@ def compile_func_to_ir(func, schema, *,
 
     trees = ql_parser.parse_block(func.get_code(schema) + ';')
     if len(trees) != 1:
-        raise ql_errors.EdgeQLError(
+        raise errors.QueryError(
             'functions can only contain one statement')
 
     tree = trees[0]

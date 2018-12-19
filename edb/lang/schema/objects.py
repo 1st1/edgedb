@@ -23,6 +23,8 @@ import itertools
 import typing
 import uuid
 
+from edb import errors
+
 from edb.lang.common import markup
 from edb.lang.common import ordered
 from edb.lang.common import parsing
@@ -32,7 +34,6 @@ from edb.lang.common import typed
 from edb.lang.common import uuidgen
 
 from . import abc as s_abc
-from . import error as s_err
 from . import name as sn
 from . import _types
 
@@ -44,7 +45,7 @@ def get_known_type_id(typename, default=...):
         pass
 
     if default is ...:
-        raise s_err.SchemaError(
+        raise errors.SchemaError(
             f'failed to lookup named type id for {typename!r}')
 
     return default
@@ -698,7 +699,7 @@ class Object(s_abc.Object, metaclass=ObjectMeta):
                     not isinstance(self, obj.__class__)):
                 msg = "cannot merge instances of %s and %s" % \
                     (obj.__class__.__name__, self.__class__.__name__)
-                raise s_err.SchemaError(msg)
+                raise errors.SchemaError(msg)
 
         for field_name in self.inheritable_fields():
             field = self.__class__.get_field(field_name)
@@ -1352,7 +1353,7 @@ class ObjectCollection:
             if isinstance(item_id, ObjectRef):
                 try:
                     obj = item_id._resolve_ref(schema)
-                except s_err.ItemNotFoundError:
+                except errors.InvalidReferenceError:
                     if allow_unresolved:
                         result.append(item_id.get_name(schema))
                     else:

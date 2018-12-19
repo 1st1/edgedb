@@ -19,6 +19,8 @@
 
 import typing
 
+from edb import errors
+
 from edb.lang.common import debug
 from edb.lang.common import exceptions as edgedb_error
 
@@ -34,7 +36,6 @@ from . import stmt as _stmt_compiler  # NOQA
 
 from . import context
 from . import dispatch
-from . import errors
 
 from .context import OutputFormat  # NOQA
 
@@ -68,10 +69,7 @@ def compile_ir_to_sql_tree(
             args = [e.args[0]]
         except (AttributeError, IndexError):
             args = []
-        err = errors.IRCompilerInternalError(*args)
-        err_ctx = errors.IRCompilerErrorContext(tree=ir_expr)
-        edgedb_error.replace_context(err, err_ctx)
-        raise err from e
+        raise errors.InternalServerError(*args) from e
 
     return qtree
 

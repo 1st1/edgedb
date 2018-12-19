@@ -72,10 +72,6 @@ class DatabaseConnectionView:
     def __init__(self, db: Database, *, user):
         self._db = db
 
-        self._in_tx = False
-        self._in_tx_with_ddl = False
-        self._txid = None
-
         self._user = user
 
         self._config = immutables.Map()
@@ -86,16 +82,19 @@ class DatabaseConnectionView:
         self._eql_to_compiled = lru.LRUMapping(
             maxsize=defines._MAX_QUERIES_CACHE)
 
+        self._new_tx_state()
+
     def _invalidate_local_cache(self):
         self._eql_to_compiled.clear()
 
-    def _reset_tx(self):
+    def _new_tx_state(self):
         self._txid = None
         self._in_tx = False
         self._in_tx_with_ddl = False
+        self._tx_error = False
 
     def rollback(self):
-        self._reset_tx()
+        self._new_tx_state()
 
     @property
     def config(self):
@@ -149,6 +148,10 @@ class DatabaseConnectionView:
 
         return compiled
 
+    def tx_error(self):
+        if self._in_tx:
+            self._tx_error = True
+
     def start(self, qu: dbstate.QueryUnit):
         self._txid = qu.txid
         if qu.starts_tx:
@@ -157,18 +160,18 @@ class DatabaseConnectionView:
                 self._in_tx_with_ddl
 
     def on_error(self, qu: dbstate.QueryUnit):
-        self._reset_tx()
+        self.tx_error()
 
     def on_success(self, qu: dbstate.QueryUnit):
         if qu.commits_tx:
             assert self._in_tx
             if self._in_tx_with_ddl:
                 self._db._signal_ddl()
-            self._reset_tx()
+            self._new_tx_state()
 
         elif qu.rollbacks_tx:
             assert self._in_tx
-            self._reset_tx()
+            self._new_tx_state()
 
         if qu.config:
             self._config = qu.config

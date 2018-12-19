@@ -261,7 +261,7 @@ class Precedence(parsing.Precedence, assoc='fail', metaclass=PrecedenceMeta):
     pass
 
 
-class ParserError(EdgeDBError):
+class ParserError(Exception):
     def __init__(
             self, msg=None, *, hint=None, details=None, token=None, line=None,
             col=None, expr=None, context=None):

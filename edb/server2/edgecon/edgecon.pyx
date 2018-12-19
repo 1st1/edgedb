@@ -172,6 +172,7 @@ cdef class EdgeConnection:
 
     async def _compile_script(self, bytes eql, bint json_mode,
                               bint legacy_mode):
+
         if self.dbview.in_tx:
             return await self.backend.compiler.call(
                 'compile_eql_script_in_tx',
@@ -208,7 +209,7 @@ cdef class EdgeConnection:
             if unit.sql:
                 try:
                     res = await self.backend.pgcon.simple_query(
-                        unit.sql, ignore_result=False)
+                        unit.sql, ignore_data=False)
                 except Exception:
                     self.dbview.on_error(unit)
                     raise
@@ -528,12 +529,7 @@ cdef class EdgeConnection:
                         self.fallthrough(False)
 
                 except Exception as ex:
-                    if self.dbview.in_tx:
-                        self.dbview.rollback()
-
-                    if self.backend.pgcon.in_tx():
-                        await self.backend.pgcon.rollback()
-
+                    self.dbview.tx_error()
                     self.buffer.finish_message()
 
                     self.write_error(ex)

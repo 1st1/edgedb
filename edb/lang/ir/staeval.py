@@ -24,7 +24,6 @@ import decimal
 import functools
 
 from edb.lang.edgeql import ast as qlast
-from edb.lang.edgeql import errors
 from edb.lang.edgeql import compiler as ql_compiler
 from edb.lang.edgeql.parser.grammar import lexutils as ql_lexutils
 
@@ -33,11 +32,11 @@ from edb.lang.ir import ast as irast
 from edb.lang.schema import schema as s_schema
 
 
-class StaticEvaluationError(errors.EdgeQLError):
+class StaticEvaluationError(Exception):
     pass
 
 
-class UnsupportedExpressionError(errors.EdgeQLError):
+class UnsupportedExpressionError(Exception):
     pass
 
 

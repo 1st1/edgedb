@@ -23,9 +23,9 @@
 import functools
 import typing
 
-from edb.lang.common import parsing
+from edb import errors
 
-from edb.lang.edgeql import errors
+from edb.lang.common import parsing
 
 from edb.lang.ir import ast as irast
 
@@ -366,7 +366,7 @@ def infer_pointer_cardinality(
         elif inferred_card is not specified_card:
             # Specified cardinality is ONE, but we inferred MANY, this
             # is an error.
-            raise errors.EdgeQLError(
+            raise errors.QueryError(
                 f'possibly more than one element returned by an '
                 f'expression for a computable '
                 f'{ptrcls.schema_class_displayname} '
@@ -448,7 +448,7 @@ def enforce_singleton_now(
     cardinality = inference.infer_cardinality(
         irexpr, scope_tree=scope, schema=ctx.env.schema)
     if cardinality != irast.Cardinality.ONE:
-        raise errors.EdgeQLError(
+        raise errors.QueryError(
             'possibly more than one element returned by an expression '
             'where only singletons are allowed',
             context=irexpr.context)
