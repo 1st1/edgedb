@@ -42,6 +42,8 @@ from edb.server2.edgecon cimport edgecon
 
 import asyncio
 
+from . import errors as pgerror
+
 
 include './stmt_cache.pyx'
 
@@ -254,7 +256,7 @@ cdef class PGProto:
                     elif mtype == b'E':  ## result
                         # ErrorResponse
                         er = self.parse_error_message()
-                        raise RuntimeError(str(er))
+                        raise pgerror.BackendError(fields=er)
 
                     elif mtype == b'n' and execute:
                         # NoData
@@ -351,7 +353,7 @@ cdef class PGProto:
                 self.buffer.finish_message()
 
         if exc:
-            raise RuntimeError(str(exc))
+            raise pgerror.BackendError(fields=exc)
         return result
 
     async def connect(self):
@@ -421,7 +423,7 @@ cdef class PGProto:
                 elif mtype == b'E':
                     # ErrorResponse
                     er = self.parse_error_message()
-                    raise RuntimeError(str(er))
+                    raise pgerror.BackendError(fields=er)
 
                 elif mtype == b'Z':
                     # ReadyForQuery

@@ -29,6 +29,7 @@ from edb import errors
 from edb.lang.common import context as parser_context
 from edb.lang.common import debug
 from edb.lang.common import devmode
+from edb.lang.common import exceptions
 
 from edb.lang import edgeql
 

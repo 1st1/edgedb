@@ -53,6 +53,7 @@ from edb.server.pgsql import dbops as pg_dbops
 
 from . import config
 from . import dbstate
+from . import errormech
 from . import sertypes
 
 
@@ -647,3 +648,7 @@ class Compiler:
             legacy_mode=legacy_mode)
 
         return self._compile(ctx=ctx, eql=eql)
+
+    async def interpret_backend_error(self, dbver, fields):
+        db = await self._get_database(dbver)
+        return errormech.interpret_backend_error(db.schema, fields)

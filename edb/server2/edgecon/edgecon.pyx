@@ -38,7 +38,7 @@ from edb.server2.pgproto.pgproto cimport (
 )
 
 from edb.server2.pgcon cimport pgcon
-
+from edb.server2.pgcon import errors as pgerror
 
 import asyncio
 
@@ -481,7 +481,7 @@ cdef class EdgeConnection:
         try:
             await self.auth()
         except Exception as ex:
-            self.write_error(ex)
+            await self.write_error(ex)
             self._transport.abort()
 
             self.loop.call_exception_handler({
@@ -532,7 +532,7 @@ cdef class EdgeConnection:
                     self.dbview.tx_error()
                     self.buffer.finish_message()
 
-                    self.write_error(ex)
+                    await self.write_error(ex)
 
                     if legacy_mode:
                         self.write(self.pgcon_last_sync_status())
@@ -578,7 +578,7 @@ cdef class EdgeConnection:
             else:
                 self.fallthrough(True)
 
-    cdef write_error(self, exc):
+    async def write_error(self, exc):
         cdef:
             WriteBuffer buf
 
@@ -593,6 +593,16 @@ cdef class EdgeConnection:
             })
 
         exc_code = None
+
+        if isinstance(exc, pgerror.BackendError):
+            try:
+                exc = await self.backend.compiler.call(
+                    'interpret_backend_error',
+                    self.dbview.dbver,
+                    exc.fields)
+            except Exception as ex:
+                exc = RuntimeError(
+                    'unhandled error while calling interpret_backend_error()')
 
         fields = None
         if (isinstance(exc, errors.EdgeDBError) and

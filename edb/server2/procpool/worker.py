@@ -86,7 +86,7 @@ def clear_exception_frames(er):
             return
         visited.add(er)
 
-        traceback.clear_frames(er.__traceback__)
+        er.__traceback__ = None
 
         if er.__cause__ is not None:
             er.__cause__ = _clear_exception_frames(er.__cause__, visited)

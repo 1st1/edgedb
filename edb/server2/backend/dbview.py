@@ -173,6 +173,9 @@ class DatabaseConnectionView:
             assert self._in_tx
             self._new_tx_state()
 
+        if not self._in_tx and qu.has_ddl:
+            self._db._signal_ddl()
+
         if qu.config:
             self._config = qu.config
 
