@@ -75,7 +75,7 @@ class DatabaseConnectionView:
         self._user = user
 
         self._config = immutables.Map()
-        self._modaliases = immutables.Map()
+        self._modaliases = immutables.Map({None: 'default'})
 
         # Whenever we are in a transaction that had executed a
         # DDL command, we use this cache for compiled queries.

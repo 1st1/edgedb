@@ -23,7 +23,7 @@ import types
 
 import parsing
 
-from edb.lang.common.exceptions import EdgeDBError, add_context, get_context
+from edb.lang.common.exceptions import add_context, get_context
 from edb.lang.common import context as pctx
 from edb.lang.common import lexer
 

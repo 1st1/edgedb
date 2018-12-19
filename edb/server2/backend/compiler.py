@@ -227,7 +227,7 @@ class Compiler:
 
         else:
             if ir.params:
-                raise RuntimeError(
+                raise errors.QueryError(
                     'queries compiled in script mode cannot accept parameters')
 
             return dbstate.SimpleQuery(sql=sql_bytes)
@@ -246,7 +246,7 @@ class Compiler:
 
         with context(s_deltas.DeltaCommandContext(schema, cmd, delta)):
             if isinstance(cmd, s_deltas.CommitDelta):
-                ddl_plan = s_db.AlterDatabase()
+                ddl_plan = s_delta.DeltaRoot()
                 ddl_plan.update(delta.get_commands(schema))
                 return self._compile_and_apply_ddl_command(ctx, ddl_plan)
 
@@ -335,9 +335,11 @@ class Compiler:
                 cmd.get_attribute_value('target')):
 
             cmd = s_ddl.compile_migration(
-                cmd, self._get_std_schema(), ctx.schema)
+                cmd,
+                self._get_std_schema(),
+                current_tx.get_schema())
 
-        return self._compile_command(cmd)
+        return self._compile_command(ctx, cmd)
 
     def _compile_ql_transaction(
             self, ctx: CompileContext,

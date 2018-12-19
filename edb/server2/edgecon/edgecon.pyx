@@ -594,18 +594,28 @@ cdef class EdgeConnection:
 
         exc_code = None
 
-        fields = {}
+        fields = None
         if (isinstance(exc, errors.EdgeDBError) and
                 type(exc) is not errors.EdgeDBError):
             exc_code = exc.get_code()
+            fields = exc._attrs
 
         if not exc_code:
             exc_code = errors.InternalServerError.get_code()
 
         buf = WriteBuffer.new_message(b'E')
         buf.write_int32(<int32_t><uint32_t>exc_code)
+
         buf.write_utf8(str(exc))
+
+        if fields is not None:
+            for k, v in fields.items():
+                assert len(k) == 1
+                buf.write_byte(ord(k.encode()))
+                buf.write_utf8(str(v))
+
         buf.write_byte(b'\x00')
+
         buf.end_message()
 
         self.write(buf)

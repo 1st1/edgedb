@@ -20,10 +20,11 @@
 import pathlib
 import unittest  # NOQA
 
-from edb.client import exceptions
+import edgedb
+
+from edb import errors
 
 from edb.lang import _testbase as tb
-from edb.lang.schema import error as s_err
 from edb.lang.schema import links as s_links
 
 from edb.server import _testbase as stb
@@ -74,7 +75,7 @@ class TestLinkTargetDeleteSchema(tb.BaseSchemaLoadTest):
             obj3.getptr(schema, 'foo').get_on_target_delete(schema),
             s_links.LinkTargetDeleteAction.RESTRICT)
 
-    @tb.must_fail(s_err.SchemaError,
+    @tb.must_fail(errors.SchemaError,
                   "cannot implicitly resolve the `on target delete` action "
                   "for 'test::C.foo'")
     def test_schema_on_target_delete_03(self):
@@ -112,7 +113,7 @@ class TestLinkTargetDeleteDeclarative(stb.QueryTestCase):
             """)
 
             with self.assertRaisesRegex(
-                    exceptions.ConstraintViolationError,
+                    edgedb.ConstraintViolationError,
                     'deletion of test::Target1 .* is prohibited by link'):
                 await self.con.execute("""
                     DELETE (SELECT test::Target1 FILTER .name = 'Target1.1');
@@ -135,7 +136,7 @@ class TestLinkTargetDeleteDeclarative(stb.QueryTestCase):
             """)
 
             with self.assertRaisesRegex(
-                    exceptions.ConstraintViolationError,
+                    edgedb.ConstraintViolationError,
                     'deletion of test::Target1 .* is prohibited by link'):
                 await self.con.execute("""
                     DELETE (SELECT test::Target1Child
@@ -159,7 +160,7 @@ class TestLinkTargetDeleteDeclarative(stb.QueryTestCase):
             """)
 
             with self.assertRaisesRegex(
-                    exceptions.ConstraintViolationError,
+                    edgedb.ConstraintViolationError,
                     'deletion of test::Target1 .* is prohibited by link'):
                 await self.con.execute("""
                     DELETE (SELECT test::Target1 FILTER .name = 'Target1.1');
@@ -182,7 +183,7 @@ class TestLinkTargetDeleteDeclarative(stb.QueryTestCase):
             """)
 
             with self.assertRaisesRegex(
-                    exceptions.ConstraintViolationError,
+                    edgedb.ConstraintViolationError,
                     'deletion of test::Target1 .* is prohibited by link'):
                 await self.con.execute("""
                     DELETE (SELECT test::Target1Child
@@ -268,7 +269,7 @@ class TestLinkTargetDeleteDeclarative(stb.QueryTestCase):
         exception_is_deferred = False
 
         with self.assertRaisesRegex(
-                exceptions.ConstraintViolationError,
+                edgedb.ConstraintViolationError,
                 'deletion of test::Target1 .* is prohibited by link'):
 
             async with self.con.transaction():
@@ -299,7 +300,7 @@ class TestLinkTargetDeleteDeclarative(stb.QueryTestCase):
         exception_is_deferred = False
 
         with self.assertRaisesRegex(
-                exceptions.ConstraintViolationError,
+                edgedb.ConstraintViolationError,
                 'deletion of test::Target1 .* is prohibited by link'):
 
             async with self.con.transaction():
@@ -809,7 +810,7 @@ class TestLinkTargetDeleteMigrations(stb.NonIsolatedDDLTestCase):
             # Post-migration the deletion trigger must fire immediately,
             # since the policy is no longer "DEFERRED"
             with self.assertRaisesRegex(
-                    exceptions.ConstraintViolationError,
+                    edgedb.ConstraintViolationError,
                     'deletion of test::Target1 .* is prohibited by link'):
                 await self.con.execute("""
                     DELETE (SELECT test::Target1 FILTER .name = 'Target1.m02');

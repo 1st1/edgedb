@@ -32,7 +32,7 @@ class TestErrorsClasses(unittest.TestCase):
             issubclass(errors.InternalServerError, errors.EdgeDBError))
 
         self.assertEqual(
-            errors.InternalServerError().get_code(), 0x_01_00_00_00)
+            errors.InternalServerError('error').get_code(), 0x_01_00_00_00)
 
         self.assertTrue(
             issubclass(errors.ProtocolError, errors.EdgeDBError))

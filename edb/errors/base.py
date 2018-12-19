@@ -19,6 +19,7 @@
 
 import typing
 
+from edb.lang.common import context as pctx
 from edb.lang.common import exceptions as ex
 
 
@@ -45,13 +46,17 @@ class EdgeDBError(Exception, metaclass=EdgeDBErrorMeta):
     _code = None
     _attrs: typing.Mapping[str, str]
 
-    def __init__(self, msg: str, *,
-                 hint: str=None, details: str=None, context=None, **kwargs):
+    def __init__(self, msg: str=None, *,
+                 hint: str=None, details: str=None, context=None):
         if type(self) is EdgeDBError:
             raise RuntimeError(
                 'EdgeDBError is not supposed to be instantiated directly')
 
         self._attrs = {}
+
+        if isinstance(context, pctx.ParserContext):
+            self._attrs['L'] = context.start.line
+            self._attrs['C'] = context.start.column
 
         if details:
             msg = f'{msg}\n\nDETAILS: {details}'
@@ -82,6 +87,14 @@ class EdgeDBError(Exception, metaclass=EdgeDBErrorMeta):
     @property
     def attrs(self):
         return self._attrs
+
+    @property
+    def line(self):
+        return int(self._attrs.get('L', -1))
+
+    @property
+    def col(self):
+        return int(self._attrs.get('C', -1))
 
     @property
     def position(self):

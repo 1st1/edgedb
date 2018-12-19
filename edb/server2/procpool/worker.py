@@ -22,9 +22,13 @@ import asyncio
 import importlib
 import base64
 import pickle
+import sys
 import traceback
 
 import uvloop
+
+from edb.lang.common import debug
+from edb.lang.common import markup
 
 from . import amsg
 
@@ -54,22 +58,18 @@ async def worker(cls, cls_args, sockname):
                 res = await meth(*args)
                 data = (0, res)
             except Exception as ex:
+                if debug.flags.server:
+                    markup.dump(ex, marker="exception in methname()",
+                                file=sys.stderr)
                 ex_str = str(ex)
-                ex_tb = traceback.format_exc()
-                data = (1, f'{ex_str}:\n\n{ex_tb}')
+                data = (1, ex, traceback.format_exc())
 
         try:
             pickled = pickle.dumps(data)
         except Exception as ex:
-            try:
-                ex_str = str(ex)
-                ex_tb = traceback.format_exc()
-                ex_str = f'{ex_str}:\n\n{ex_tb}'
-            except Exception as ex2:
-                ex_str = f'{type(ex2).__name__}: cannot call ' \
-                         f'{type(ex).__name__}.__str__'
-
-            pickled = pickle.dumps((1, ex_str))
+            ex_tb = traceback.format_exc()
+            ex_str = f'{ex}:\n\n{ex_tb}'
+            pickled = pickle.dumps((2, ex_str))
 
         await con.reply(pickled)
 

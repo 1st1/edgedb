@@ -92,14 +92,18 @@ class Worker:
 
         msg = pickle.dumps((method_name, args))
         data = await self._con.request(msg)
-        status, data = pickle.loads(data)
+        status, *data = pickle.loads(data)
 
         self._last_used = time.monotonic()
 
         if status == 0:
-            return data
+            return data[0]
+        elif status == 1:
+            exc, tb = data
+            exc.__text_traceback__ = tb
+            raise exc
         else:
-            raise RuntimeError(data)
+            raise RuntimeError(data[0])
 
     def close(self):
         self._manager._stats_killed += 1
