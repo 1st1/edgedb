@@ -26,7 +26,7 @@ import uvloop
 
 from edb.server import _testbase as tb
 from edb.server2 import procpool
-from edb.server2 import taskgroup
+from edb.lang.common import taskgroup
 
 
 class MyExc(Exception):

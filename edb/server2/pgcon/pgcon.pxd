@@ -65,7 +65,7 @@ cdef class PGProto:
 
         StatementsCache prep_stmts
 
-    cdef write(self, WriteBuffer buf)
+    cdef write(self, buf)
 
     cdef parse_error_message(self)
     cdef parse_sync_message(self)

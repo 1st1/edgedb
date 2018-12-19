@@ -170,6 +170,67 @@ cdef class EdgeConnection:
                 self.dbview.config,
                 json_mode)
 
+    async def _compile_script(self, bytes eql, bint json_mode,
+                              bint legacy_mode):
+        if self.dbview.in_tx:
+            return await self.backend.compiler.call(
+                'compile_eql_script_in_tx',
+                self.dbview.txid,
+                eql,
+                json_mode,
+                legacy_mode)
+        else:
+            return await self.backend.compiler.call(
+                'compile_eql_script',
+                self.dbview.dbver,
+                eql,
+                self.dbview.modaliases,
+                self.dbview.config,
+                json_mode,
+                legacy_mode)
+
+    async def legacy(self):
+        cdef:
+            WriteBuffer msg
+            WriteBuffer packet
+
+        json_mode = True
+
+        eql = self.buffer.read_null_str()
+        if not eql:
+            raise errors.BinaryProtocolError('empty query')
+
+        script = await self._compile_script(eql, True, True)
+
+        resbuf = []
+        for unit in script:
+            self.dbview.start(unit)
+            if unit.sql:
+                try:
+                    res = await self.backend.pgcon.simple_query(
+                        unit.sql, ignore_result=False)
+                except Exception:
+                    self.dbview.on_error(unit)
+                    raise
+                else:
+                    self.dbview.on_success(unit)
+
+                if res:
+                    resbuf.extend(r[0] for r in res)
+            else:
+                # SET command or something else that doesn't involve
+                # executing SQL.
+                self.dbview.on_success(unit)
+
+        resbuf = b'[' + b', '.join(resbuf) + b']'
+        msg = WriteBuffer.new_message(b'L')
+        msg.write_bytes(resbuf)
+
+        packet = WriteBuffer.new()
+        packet.write_buffer(msg.end_message())
+        packet.write_buffer(self.pgcon_last_sync_status())
+        self.write(packet)
+
     async def parse(self):
         json_mode = False
 
@@ -440,6 +501,8 @@ cdef class EdgeConnection:
                     await self.wait_for_message()
                 mtype = self.buffer.get_message_type()
 
+                legacy_mode = False
+
                 try:
                     if mtype == b'P':
                         await self.parse()
@@ -456,6 +519,11 @@ cdef class EdgeConnection:
                     elif mtype == b'S':
                         await self.sync()
 
+                    elif mtype == b'L':
+                        legacy_mode = True
+                        await self.legacy()
+                        self.flush()
+
                     else:
                         self.fallthrough(False)
 
@@ -466,11 +534,15 @@ cdef class EdgeConnection:
                     if self.backend.pgcon.in_tx():
                         await self.backend.pgcon.rollback()
 
-                    self.write_error(ex)
-
                     self.buffer.finish_message()
 
-                    await self.recover_from_error()
+                    self.write_error(ex)
+
+                    if legacy_mode:
+                        self.write(self.pgcon_last_sync_status())
+                        self.flush()
+                    else:
+                        await self.recover_from_error()
 
                 else:
                     self.buffer.finish_message()
@@ -572,7 +644,9 @@ cdef class EdgeConnection:
             self.buffer.discard_message()
             return
 
-        if not ignore_unhandled:
+        if ignore_unhandled:
+            self.buffer.discard_message()
+        else:
             raise errors.BinaryProtocolError(
                 f'unexpected message type {chr(mtype)!r}')
 

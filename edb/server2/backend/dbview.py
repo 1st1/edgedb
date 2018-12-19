@@ -106,6 +106,10 @@ class DatabaseConnectionView:
         return self._modaliases
 
     @property
+    def txid(self):
+        return self._txid
+
+    @property
     def in_tx(self):
         return self._in_tx
 

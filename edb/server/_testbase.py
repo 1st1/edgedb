@@ -202,8 +202,13 @@ class ConnectedTestCase(ClusterTestCase):
 
     @classmethod
     def connect(cls, loop, cluster, database=None):
-        return loop.run_until_complete(
-            cluster.connect(user='edgedb', database=database))
+        # return loop.run_until_complete(
+        #     cluster.connect(user='edgedb', database=database))
+
+        import edgedb
+        a = cluster.get_connect_args().copy()
+        a.update(dict(user='edgedb', database=database, port=a['port'] + 1))
+        return loop.run_until_complete(edgedb.connect(**a))
 
     @classmethod
     def setUpClass(cls):
@@ -246,15 +251,16 @@ class DatabaseTestCase(ConnectedTestCase):
     def setUp(self):
         if self.INTERNAL_TESTMODE:
             self.loop.run_until_complete(
-                self.con.execute('SET CONFIG __internal_testmode := true;'))
+                self.con._legacy_execute(
+                    'SET CONFIG __internal_testmode := true;'))
 
         if self.ISOLATED_METHODS:
             self.loop.run_until_complete(
-                self.con.execute('START TRANSACTION;'))
+                self.con._legacy_execute('START TRANSACTION;'))
 
         if self.SETUP_METHOD:
             self.loop.run_until_complete(
-                self.con.execute(self.SETUP_METHOD))
+                self.con._legacy_execute(self.SETUP_METHOD))
 
         super().setUp()
 
@@ -262,12 +268,12 @@ class DatabaseTestCase(ConnectedTestCase):
         try:
             if self.TEARDOWN_METHOD:
                 self.loop.run_until_complete(
-                    self.con.execute(self.TEARDOWN_METHOD))
+                    self.con._legacy_execute(self.TEARDOWN_METHOD))
         finally:
             try:
                 if self.ISOLATED_METHODS:
                     self.loop.run_until_complete(
-                        self.con.execute('ROLLBACK;'))
+                        self.con._legacy_execute('ROLLBACK;'))
             finally:
                 super().tearDown()
 
@@ -279,14 +285,14 @@ class DatabaseTestCase(ConnectedTestCase):
 
         if not os.environ.get('EDGEDB_TEST_CASES_SET_UP'):
             script = f'CREATE DATABASE {dbname};'
-            cls.loop.run_until_complete(cls.admin_conn.execute(script))
+            cls.loop.run_until_complete(cls.admin_conn._legacy_execute(script))
 
         cls.con = cls.connect(cls.loop, cls.cluster, database=dbname)
 
         if not os.environ.get('EDGEDB_TEST_CASES_SET_UP'):
             script = cls.get_setup_script()
             if script:
-                cls.loop.run_until_complete(cls.con.execute(script))
+                cls.loop.run_until_complete(cls.con._legacy_execute(script))
 
     @classmethod
     def get_database_name(cls):
@@ -350,7 +356,8 @@ class DatabaseTestCase(ConnectedTestCase):
 
         try:
             if script:
-                cls.loop.run_until_complete(cls.con.execute(script))
+                cls.loop.run_until_complete(
+                    cls.con._legacy_execute(script))
         finally:
             cls.loop.run_until_complete(cls.con.close())
             cls.con = cls.admin_conn
@@ -360,7 +367,8 @@ class DatabaseTestCase(ConnectedTestCase):
                     dbname = cls.get_database_name()
                     script = f'DROP DATABASE {dbname};'
 
-                    cls.loop.run_until_complete(cls.admin_conn.execute(script))
+                    cls.loop.run_until_complete(
+                        cls.admin_conn._legacy_execute(script))
             finally:
                 super().tearDownClass()
 
@@ -395,16 +403,16 @@ class BaseQueryTestCase(DatabaseTestCase):
 
     async def query(self, query):
         query = textwrap.dedent(query)
-        return await self.con.execute(query)
+        return await self.con._legacy_execute(query)
 
     async def assert_query_result(self, query, result, *, msg=None):
-        res = await self.con.execute(query)
+        res = await self.con._legacy_execute(query)
         self.assert_data_shape(res, result, message=msg)
         return res
 
     async def assert_sorted_query_result(self, query, key, result, *,
                                          msg=None):
-        res = await self.con.execute(query)
+        res = await self.con._legacy_execute(query)
         # sort the query result by using the supplied key
         for r in res:
             # don't bother sorting empty things
@@ -653,13 +661,13 @@ async def _setup_database(dbname, setup_script, conn_args):
         database=edgedb_defines.EDGEDB_SUPERUSER_DB, **conn_args)
 
     try:
-        await admin_conn.execute(f'CREATE DATABASE {dbname};')
+        await admin_conn._legacy_execute(f'CREATE DATABASE {dbname};')
     finally:
         await admin_conn.close()
 
     dbconn = await edgedb_client.connect(database=dbname, **conn_args)
     try:
-        await dbconn.execute(setup_script)
+        await dbconn._legacy_execute(setup_script)
     finally:
         await dbconn.close()
 

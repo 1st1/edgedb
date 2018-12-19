@@ -26,7 +26,7 @@ from edb.tools import test
 class TestEdgeQLFuncCalls(tb.QueryTestCase):
 
     async def test_edgeql_calls_01(self):
-        await self.con.execute('''
+        await self.query('''
             CREATE FUNCTION test::call1(
                 s: str,
                 VARIADIC a: int64,
@@ -67,7 +67,7 @@ class TestEdgeQLFuncCalls(tb.QueryTestCase):
             ])
 
         finally:
-            await self.con.execute('''
+            await self.query('''
                 DROP FUNCTION test::call1(
                     s: str,
                     VARIADIC a: int64,

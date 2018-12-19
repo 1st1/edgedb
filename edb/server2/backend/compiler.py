@@ -69,6 +69,7 @@ class CompileContext(typing.NamedTuple):
     state: dbstate.CompilerConnectionState
     output_format: pg_compiler.OutputFormat
     single_query_mode: bool
+    legacy_mode: bool
 
 
 EMPTY_MAP = immutables.Map()
@@ -172,7 +173,7 @@ class Compiler:
 
         sql_bytes = sql_text.encode(defines.EDGEDB_ENCODING)
 
-        if ctx.single_query_mode:
+        if ctx.single_query_mode or ctx.legacy_mode:
             if ctx.output_format is pg_compiler.OutputFormat.NATIVE:
                 out_type_data, out_type_id = sertypes.TypeSerializer.describe(
                     ir.schema, ir.expr.stype, ir.view_shapes)
@@ -311,7 +312,7 @@ class Compiler:
             modaliases=current_tx.get_modaliases(),
             testmode=bool(current_tx.get_config().get('__internal_testmode')))
 
-        return self._compile_command(cmd)
+        return self._compile_command(ctx, cmd)
 
     def _compile_ql_migration(self, ctx: CompileContext,
                               ql: typing.Union[qlast.Database, qlast.Delta]):
@@ -388,7 +389,7 @@ class Compiler:
                     val_ir = ql_compiler.compile_ast_fragment_to_ir(
                         item.expr, schema=schema)
                     val = ireval.evaluate_to_python_val(
-                        val_ir, schema=schema)
+                        val_ir.expr, schema=schema)
                 except ireval.StaticEvaluationError:
                     raise RuntimeError('invalid SET expression')
                 else:
@@ -437,8 +438,9 @@ class Compiler:
 
     def _compile(self, *,
                  ctx: CompileContext,
-                 eql: str) -> typing.List[dbstate.QueryUnit]:
+                 eql: bytes) -> typing.List[dbstate.QueryUnit]:
 
+        eql = eql.decode()
         statements = edgeql.parse_block(eql)
 
         if ctx.single_query_mode and len(statements) > 1:
@@ -455,19 +457,24 @@ class Compiler:
         for stmt in statements:
             comp: dbstate.BaseQuery = self._compile_dispatch_ql(ctx, stmt)
 
+            if ctx.legacy_mode and unit is not None:
+                units.append(unit)
+                unit = None
+
             if unit is None:
                 unit = dbstate.QueryUnit(txid=txid, dbver=ctx.state.dbver)
 
             if isinstance(comp, dbstate.Query):
-                unit.sql += comp.sql
-
-                if ctx.single_query_mode:
+                if ctx.single_query_mode or ctx.legacy_mode:
+                    unit.sql = comp.sql
                     unit.sql_hash = comp.sql_hash
 
                     unit.out_type_data = comp.out_type_data
                     unit.out_type_id = comp.out_type_id
                     unit.in_type_data = comp.in_type_data
                     unit.in_type_id = comp.in_type_id
+                else:
+                    unit.sql += comp.sql
 
             elif isinstance(comp, dbstate.SimpleQuery):
                 unit.sql += comp.sql
@@ -503,9 +510,10 @@ class Compiler:
 
         return units
 
-    async def _ctx_new_con_state(self, dbver: int, json_mode: bool,
+    async def _ctx_new_con_state(self, *, dbver: int, json_mode: bool,
                                  single_query_mode: bool,
-                                 modaliases, config):
+                                 modaliases, config,
+                                 legacy_mode: bool):
 
         assert isinstance(modaliases, immutables.Map)
         assert isinstance(config, immutables.Map)
@@ -524,12 +532,14 @@ class Compiler:
         ctx = CompileContext(
             state=state,
             output_format=of,
-            single_query_mode=single_query_mode)
+            single_query_mode=single_query_mode,
+            legacy_mode=legacy_mode)
 
         return ctx
 
-    async def _ctx_from_con_state(self, txid: int, json_mode: bool,
-                                  single_query_mode: bool):
+    async def _ctx_from_con_state(self, *, txid: int, json_mode: bool,
+                                  single_query_mode: bool,
+                                  legacy_mode: bool):
         if (self._current_db_state is None or
                 self._current_db_state.current_tx().id != txid):
             self._current_db_state = None
@@ -546,7 +556,8 @@ class Compiler:
         ctx = CompileContext(
             state=state,
             output_format=of,
-            single_query_mode=single_query_mode)
+            single_query_mode=single_query_mode,
+            legacy_mode=legacy_mode)
 
         return ctx
 
@@ -570,9 +581,9 @@ class Compiler:
             json_mode=json_mode,
             single_query_mode=True,
             modaliases=sess_modaliases,
-            config=sess_config)
+            config=sess_config,
+            legacy_mode=False)
 
-        eql = eql.decode()
         units = self._compile(ctx=ctx, eql=eql)
 
         assert len(units) == 1
@@ -587,7 +598,8 @@ class Compiler:
         ctx = await self._ctx_from_con_state(
             txid=txid,
             json_mode=json_mode,
-            single_query_mode=True)
+            single_query_mode=True,
+            legacy_mode=False)
 
         units = self._compile(ctx=ctx, eql=eql)
 
@@ -600,27 +612,30 @@ class Compiler:
             eql: bytes,
             sess_modaliases: immutables.Map,
             sess_config: immutables.Map,
-            json_mode: bool) -> typing.List[dbstate.QueryUnit]:
+            json_mode: bool,
+            legacy_mode: bool) -> typing.List[dbstate.QueryUnit]:
 
         ctx = await self._ctx_new_con_state(
             dbver=dbver,
             json_mode=json_mode,
             single_query_mode=False,
             modaliases=sess_modaliases,
-            config=sess_config)
+            config=sess_config,
+            legacy_mode=legacy_mode)
 
-        eql = eql.decode()
         return self._compile(ctx=ctx, eql=eql)
 
     async def compile_eql_script_in_tx(
             self,
             txid: int,
             eql: bytes,
-            json_mode: bool) -> typing.List[dbstate.QueryUnit]:
+            json_mode: bool,
+            legacy_mode: bool) -> typing.List[dbstate.QueryUnit]:
 
         ctx = await self._ctx_from_con_state(
             txid=txid,
             json_mode=json_mode,
-            single_query_mode=False)
+            single_query_mode=False,
+            legacy_mode=legacy_mode)
 
         return self._compile(ctx=ctx, eql=eql)
