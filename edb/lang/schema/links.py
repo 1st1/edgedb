@@ -328,7 +328,7 @@ class CreateLink(LinkCommand, referencing.CreateReferencedInheritingObject):
                     target_type = utils.resolve_typeref(target, schema=schema)
 
                 if not isinstance(target_type, s_objtypes.ObjectType):
-                    raise errors.SchemaDefinitionError(
+                    raise errors.InvalidLinkTargetError(
                         f'invalid link target, expected object type, got '
                         f'{target_type.__class__.__name__}',
                         context=astnode.target.context

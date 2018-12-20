@@ -742,7 +742,7 @@ class TestEdgeQLDDL(tb.DDLTestCase):
 
     async def test_edgeql_ddl_link_bad_01(self):
         with self.assertRaisesRegex(
-                edgedb.SchemaError,
+                edgedb.SchemaDefinitionError,
                 f'link or property name length exceeds the maximum'):
             await self.query("""
                 CREATE ABSTRACT LINK test::f123456789_123456789_123456789_\
@@ -750,7 +750,7 @@ class TestEdgeQLDDL(tb.DDLTestCase):
             """)
 
         with self.assertRaisesRegex(
-                edgedb.SchemaError,
+                edgedb.SchemaDefinitionError,
                 f'link or property name length exceeds the maximum'):
             await self.query("""
                 CREATE TYPE test::Foo {
@@ -761,7 +761,7 @@ class TestEdgeQLDDL(tb.DDLTestCase):
 
     async def test_edgeql_ddl_prop_bad_01(self):
         with self.assertRaisesRegex(
-                edgedb.SchemaError,
+                edgedb.SchemaDefinitionError,
                 f'link or property name length exceeds the maximum'):
             await self.query("""
                 CREATE ABSTRACT PROPERTY test::f123456789_123456789_123456789_\
@@ -769,7 +769,7 @@ class TestEdgeQLDDL(tb.DDLTestCase):
             """)
 
         with self.assertRaisesRegex(
-                edgedb.SchemaError,
+                edgedb.SchemaDefinitionError,
                 f'link or property name length exceeds the maximum'):
             await self.query("""
                 CREATE TYPE test::Foo {
@@ -1270,7 +1270,7 @@ class TestEdgeQLDDL(tb.DDLTestCase):
 
     async def test_edgeql_ddl_property_computable_bad_01(self):
         with self.assertRaisesRegex(
-                edgedb.SchemaDefinitionError,
+                edgedb.InvalidPropertyTargetError,
                 r"invalid property target, expected.*, got 'std::Object'"):
             await self.query('''\
                 CREATE TYPE test::CompPropBad;
@@ -1412,7 +1412,7 @@ class TestEdgeQLDDL(tb.DDLTestCase):
 
     async def test_edgeql_ddl_anytype_01(self):
         with self.assertRaisesRegex(
-                edgedb.SchemaDefinitionError,
+                edgedb.InvalidPropertyTargetError,
                 r"invalid property target"):
 
             await self.query("""
@@ -1423,7 +1423,7 @@ class TestEdgeQLDDL(tb.DDLTestCase):
 
     async def test_edgeql_ddl_anytype_02(self):
         with self.assertRaisesRegex(
-                edgedb.SchemaDefinitionError,
+                edgedb.InvalidLinkTargetError,
                 r"invalid link target"):
 
             await self.query("""
@@ -1434,7 +1434,7 @@ class TestEdgeQLDDL(tb.DDLTestCase):
 
     async def test_edgeql_ddl_anytype_03(self):
         with self.assertRaisesRegex(
-                edgedb.SchemaDefinitionError,
+                edgedb.InvalidPropertyTargetError,
                 r"invalid property target"):
 
             await self.query("""
@@ -1445,7 +1445,7 @@ class TestEdgeQLDDL(tb.DDLTestCase):
 
     async def test_edgeql_ddl_anytype_04(self):
         with self.assertRaisesRegex(
-                edgedb.SchemaDefinitionError,
+                edgedb.InvalidPropertyTargetError,
                 r"invalid property target"):
 
             await self.query("""
@@ -1456,7 +1456,7 @@ class TestEdgeQLDDL(tb.DDLTestCase):
 
     async def test_edgeql_ddl_anytype_05(self):
         with self.assertRaisesRegex(
-                edgedb.SchemaDefinitionError,
+                edgedb.InvalidPropertyTargetError,
                 r"invalid property target"):
 
             await self.query("""
