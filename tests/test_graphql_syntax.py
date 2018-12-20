@@ -187,7 +187,8 @@ class TestGraphQLParser(GraphQLSyntaxTest):
         {name}
         """
 
-    @tb.must_fail(errors.GraphQLSyntaxError, 'Unexpected token', line=2, col=18)
+    @tb.must_fail(errors.GraphQLSyntaxError,
+                  'Unexpected token', line=2, col=18)
     def test_graphql_syntax_short05(self):
         """
         { field: {} }
@@ -327,14 +328,16 @@ class TestGraphQLParser(GraphQLSyntaxTest):
         }
         """
 
-    @tb.must_fail(errors.GraphQLSyntaxError, 'Unexpected token', line=3, col=28)
+    @tb.must_fail(errors.GraphQLSyntaxError,
+                  'Unexpected token', line=3, col=28)
     def test_graphql_syntax_fragment05(self):
         """
         { ...MissingOn }
         fragment MissingOn Type {name}
         """
 
-    @tb.must_fail(errors.GraphQLSyntaxError, 'undefined fragment', line=2, col=10)
+    @tb.must_fail(errors.GraphQLSyntaxError,
+                  'undefined fragment', line=2, col=10)
     def test_graphql_syntax_fragment06(self):
         """
         {...Missing}
@@ -426,7 +429,8 @@ class TestGraphQLParser(GraphQLSyntaxTest):
         }
         """
 
-    @tb.must_fail(errors.GraphQLSyntaxError, 'Unexpected token', line=2, col=23)
+    @tb.must_fail(errors.GraphQLSyntaxError,
+                  'Unexpected token', line=2, col=23)
     def test_graphql_syntax_query05(self):
         r"""
         query myquery on type { field }
@@ -459,7 +463,8 @@ class TestGraphQLParser(GraphQLSyntaxTest):
         query myQuery { id }
         """
 
-    @tb.must_fail(errors.GraphQLSyntaxError, 'unnamed operation is not allowed here',
+    @tb.must_fail(errors.GraphQLSyntaxError,
+                  'unnamed operation is not allowed here',
                   line=2, col=9)
     def test_graphql_syntax_query10(self):
         """
@@ -1073,31 +1078,36 @@ class TestGraphQLParser(GraphQLSyntaxTest):
         query H { ...someFragment @null }
         """
 
-    @tb.must_fail(errors.GraphQLSyntaxError, 'Unexpected token', line=2, col=21)
+    @tb.must_fail(errors.GraphQLSyntaxError,
+                  'Unexpected token', line=2, col=21)
     def test_graphql_syntax_names12(self):
         r"""
         { ... on on on {id} }
         """
 
-    @tb.must_fail(errors.GraphQLSyntaxError, 'Unexpected token', line=2, col=18)
+    @tb.must_fail(errors.GraphQLSyntaxError,
+                  'Unexpected token', line=2, col=18)
     def test_graphql_syntax_names13(self):
         r"""
         fragment on on on {id}
         """
 
-    @tb.must_fail(errors.GraphQLSyntaxError, 'Unexpected token', line=2, col=18)
+    @tb.must_fail(errors.GraphQLSyntaxError,
+                  'Unexpected token', line=2, col=18)
     def test_graphql_syntax_names14(self):
         r"""
         { ... on }
         """
 
-    @tb.must_fail(errors.GraphQLSyntaxError, 'variabledefinition', line=2, col=32)
+    @tb.must_fail(errors.GraphQLSyntaxError,
+                  'variabledefinition', line=2, col=32)
     def test_graphql_syntax_names15(self):
         r"""
         query myQuery($x: Int, $x: Int) { id }
         """
 
-    @tb.must_fail(errors.GraphQLSyntaxError, 'variabledefinition', line=2, col=32)
+    @tb.must_fail(errors.GraphQLSyntaxError,
+                  'variabledefinition', line=2, col=32)
     def test_graphql_syntax_names16(self):
         r"""
         query myQuery($x: Int, $x: Float) { id }

@@ -109,7 +109,6 @@ class TestEdgeQLFuncCalls(tb.QueryTestCase):
                     r'could not find a function variant'):
                 await self.query(c)
 
-
     @test.not_implemented(
         'type of the "[]" default cannot be determined for array<anytype>')
     async def test_edgeql_calls_04(self):

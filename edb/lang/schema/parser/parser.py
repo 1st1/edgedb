@@ -18,6 +18,7 @@
 
 from edb import errors
 
+from edb.lang.common import exceptions
 from edb.lang.common import parsing
 from edb.lang.common.lexer import LexError
 from .grammar import lexer
@@ -33,6 +34,13 @@ class EdgeSchemaParser(parsing.Parser):
             # the parser context, which may be a token or so out of sync
             context.start.line = native_err.line
             context.start.column = native_err.col
+
+        if isinstance(native_err, errors.EdgeQLSyntaxError):
+            # This means that we tried to parse something using the
+            # EdgeQL parser, in which case the context of the error
+            # should be properly rebased and we should use it instead.
+            context = exceptions.get_context(
+                native_err, parsing.ParserContext)
 
         msg = native_err.args[0]
         if token and token.type == 'BADLINECONT':

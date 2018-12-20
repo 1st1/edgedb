@@ -369,6 +369,10 @@ class DatabaseTestCase(ConnectedTestCase):
 
                     cls.loop.run_until_complete(
                         cls.admin_conn._legacy_execute(script))
+
+                cls.loop.run_until_complete(
+                    cls.con.close())
+
             finally:
                 super().tearDownClass()
 

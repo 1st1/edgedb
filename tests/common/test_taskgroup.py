@@ -23,7 +23,6 @@ from edb.lang.common import taskgroup
 from edb.server import _testbase as tb
 
 
-
 class MyExc(Exception):
     pass
 
