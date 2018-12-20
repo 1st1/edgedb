@@ -116,7 +116,7 @@ class DeclarationLoader:
 
             if issubclass(objcls, s_pointers.Pointer):
                 if len(decl.name) > s_pointers.MAX_NAME_LENGTH:
-                    raise errors.SchemaError(
+                    raise errors.SchemaDefinitionError(
                         f'link or property name length exceeds the maximum of '
                         f'{s_pointers.MAX_NAME_LENGTH} characters',
                         context=decl.context)
@@ -416,7 +416,7 @@ class DeclarationLoader:
                 prop_target = self._get_ref_type(propdecl.target[0])
                 if not isinstance(prop_target, (s_scalars.ScalarType,
                                                 s_types.Collection)):
-                    raise errors.SchemaDefinitionError(
+                    raise errors.InvalidPropertyTargetError(
                         f'invalid property target, expected primitive type, '
                         f'got {prop_target.__class__.__name__}',
                         context=propdecl.target[0].context
@@ -572,7 +572,7 @@ class DeclarationLoader:
             for linkdecl in objtypedecl.links:
                 link_name = self._get_ref_name(linkdecl.name)
                 if len(link_name) > s_pointers.MAX_NAME_LENGTH:
-                    raise errors.SchemaError(
+                    raise errors.SchemaDefinitionError(
                         f'link or property name length exceeds the maximum of '
                         f'{s_pointers.MAX_NAME_LENGTH} characters',
                         context=linkdecl.context)
@@ -628,7 +628,7 @@ class DeclarationLoader:
 
                 if (not target.is_any() and
                         not isinstance(target, s_objtypes.ObjectType)):
-                    raise errors.SchemaDefinitionError(
+                    raise errors.InvalidLinkTargetError(
                         f'invalid link target, expected object type, got '
                         f'{target.__class__.__name__}',
                         context=linkdecl.target[0].context
@@ -749,7 +749,7 @@ class DeclarationLoader:
 
             if isinstance(ptr, s_links.Link):
                 if not isinstance(expr_type, s_objtypes.ObjectType):
-                    raise errors.SchemaDefinitionError(
+                    raise errors.InvalidLinkTargetError(
                         f'invalid link target, expected object type, got '
                         f'{expr_type.__class__.__name__}',
                         context=ptrdecl.expr.context
@@ -757,7 +757,7 @@ class DeclarationLoader:
             else:
                 if not isinstance(expr_type, (s_scalars.ScalarType,
                                               s_types.Collection)):
-                    raise errors.SchemaDefinitionError(
+                    raise errors.InvalidPropertyTargetError(
                         f'invalid property target, expected primitive type, '
                         f'got {expr_type.__class__.__name__}',
                         context=ptrdecl.expr.context

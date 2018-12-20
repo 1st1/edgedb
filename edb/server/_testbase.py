@@ -405,6 +405,10 @@ class BaseQueryTestCase(DatabaseTestCase):
         query = textwrap.dedent(query)
         return await self.con._legacy_execute(query)
 
+    async def graphql_query(self, query):
+        query = textwrap.dedent(query)
+        return await self.con._legacy_execute(query, graphql=True)
+
     async def assert_query_result(self, query, result, *, msg=None):
         res = await self.con._legacy_execute(query)
         self.assert_data_shape(res, result, message=msg)

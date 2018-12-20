@@ -163,6 +163,9 @@ class DatabaseConnectionView:
         self.tx_error()
 
     def on_success(self, qu: dbstate.QueryUnit):
+        if not self._in_tx and qu.has_ddl:
+            self._db._signal_ddl()
+
         if qu.commits_tx:
             assert self._in_tx
             if self._in_tx_with_ddl:
@@ -172,9 +175,6 @@ class DatabaseConnectionView:
         elif qu.rollbacks_tx:
             assert self._in_tx
             self._new_tx_state()
-
-        if not self._in_tx and qu.has_ddl:
-            self._db._signal_ddl()
 
         if qu.config:
             self._config = qu.config

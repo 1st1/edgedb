@@ -206,11 +206,6 @@ def run_server(args):
                     database='all', user='all',
                     auth_method='trust'
                 )
-                # cluster.add_hba_entry(
-                #     type='local', address=ipaddress.ip_network('127.0.0.0/24'),
-                #     database='all', user='all',
-                #     auth_method='trust'
-                # )
                 pg_cluster_init_by_us = True
 
             cluster_status = cluster.get_status()

@@ -436,7 +436,7 @@ class PointerCommand(constraints.ConsistencySubjectCommand,
         name = super()._classname_from_ast(schema, astnode, context)
         shortname = sn.shortname_from_fullname(name)
         if len(shortname.name) > MAX_NAME_LENGTH:
-            raise errors.SchemaError(
+            raise errors.SchemaDefinitionError(
                 f'link or property name length exceeds the maximum of '
                 f'{MAX_NAME_LENGTH} characters',
                 context=astnode.context)

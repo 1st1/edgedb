@@ -149,7 +149,7 @@ def interpret_backend_error(schema, fields):
 
         elif error_type == 'link_target_del':
             return errors.ConstraintViolationError(
-                message, detail=detail)
+                message, details=detail)
 
         elif error_type == 'constraint':
             if constraint_name is None:

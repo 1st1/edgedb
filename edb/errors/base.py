@@ -47,11 +47,13 @@ class EdgeDBError(Exception, metaclass=EdgeDBErrorMeta):
     _attrs: typing.Mapping[str, str]
 
     def __init__(self, msg: str=None, *,
-                 hint: str=None, details: str=None, context=None):
+                 hint: str=None, details: str=None, context=None,
+                 token=None):
         if type(self) is EdgeDBError:
             raise RuntimeError(
                 'EdgeDBError is not supposed to be instantiated directly')
 
+        self.token = token
         self._attrs = {}
 
         if isinstance(context, pctx.ParserContext):

@@ -33,10 +33,8 @@ class GraphQLTranslationError(GraphQLError):
 
         if context:
             add_context(self, context)
-            self.line = context.start.line
-            self.col = context.start.column
-        else:
-            self.line = self.col = self.context = None
+            self._attrs['L'] = context.start.line
+            self._attrs['C'] = context.start.column
 
 
 class GraphQLValidationError(GraphQLTranslationError):
@@ -47,5 +45,7 @@ class GraphQLCoreError(GraphQLError):
     def __init__(self, msg, *, line=None, col=None):
         super().__init__(msg)
 
-        self.line = line
-        self.col = col
+        if line:
+            self._attrs['L'] = line
+        if col:
+            self._attrs['C'] = col

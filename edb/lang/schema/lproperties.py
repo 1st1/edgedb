@@ -194,7 +194,7 @@ class CreateProperty(PropertyCommand,
             if (not isinstance(target_type, (scalars.ScalarType,
                                              types.Collection)) or
                     target_type.is_polymorphic(schema)):
-                raise errors.SchemaDefinitionError(
+                raise errors.InvalidPropertyTargetError(
                     f'invalid property target, expected primitive type, '
                     f'got {target_type.get_displayname(schema)!r}',
                     context=target.context

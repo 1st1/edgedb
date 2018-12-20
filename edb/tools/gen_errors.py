@@ -114,7 +114,7 @@ class ErrorsTree:
 
     edgedb_base_errors = frozenset(
         name for name in edb_base_errors.__all__
-             if re.match(r'^\w+Error$', name)
+        if re.match(r'^\w+Error$', name)
     )
 
     # more on exceptions:

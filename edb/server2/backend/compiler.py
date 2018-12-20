@@ -33,6 +33,7 @@ from edb.server.pgsql import compiler as pg_compiler
 from edb.server.pgsql import intromech
 
 from edb.lang import edgeql
+from edb.lang import graphql
 from edb.lang.common import debug
 
 from edb.lang.edgeql import ast as qlast
@@ -70,6 +71,7 @@ class CompileContext(typing.NamedTuple):
     output_format: pg_compiler.OutputFormat
     single_query_mode: bool
     legacy_mode: bool
+    graphql_mode: bool
 
 
 EMPTY_MAP = immutables.Map()
@@ -450,6 +452,12 @@ class Compiler:
                  eql: bytes) -> typing.List[dbstate.QueryUnit]:
 
         eql = eql.decode()
+        if ctx.graphql_mode:
+            eql = graphql.translate(
+                ctx.state.current_tx().get_schema(),
+                eql,
+                variables={}) + ';'
+
         statements = edgeql.parse_block(eql)
 
         if ctx.single_query_mode and len(statements) > 1:
@@ -522,7 +530,8 @@ class Compiler:
     async def _ctx_new_con_state(self, *, dbver: int, json_mode: bool,
                                  single_query_mode: bool,
                                  modaliases, config,
-                                 legacy_mode: bool):
+                                 legacy_mode: bool,
+                                 graphql_mode: bool=False):
 
         assert isinstance(modaliases, immutables.Map)
         assert isinstance(config, immutables.Map)
@@ -542,13 +551,15 @@ class Compiler:
             state=state,
             output_format=of,
             single_query_mode=single_query_mode,
-            legacy_mode=legacy_mode)
+            legacy_mode=legacy_mode,
+            graphql_mode=graphql_mode)
 
         return ctx
 
     async def _ctx_from_con_state(self, *, txid: int, json_mode: bool,
                                   single_query_mode: bool,
-                                  legacy_mode: bool):
+                                  legacy_mode: bool,
+                                  graphql_mode: bool=False):
         if (self._current_db_state is None or
                 self._current_db_state.current_tx().id != txid):
             self._current_db_state = None
@@ -566,7 +577,8 @@ class Compiler:
             state=state,
             output_format=of,
             single_query_mode=single_query_mode,
-            legacy_mode=legacy_mode)
+            legacy_mode=legacy_mode,
+            graphql_mode=graphql_mode)
 
         return ctx
 
@@ -622,7 +634,8 @@ class Compiler:
             sess_modaliases: immutables.Map,
             sess_config: immutables.Map,
             json_mode: bool,
-            legacy_mode: bool) -> typing.List[dbstate.QueryUnit]:
+            legacy_mode: bool,
+            graphql_mode: bool) -> typing.List[dbstate.QueryUnit]:
 
         ctx = await self._ctx_new_con_state(
             dbver=dbver,
@@ -630,7 +643,8 @@ class Compiler:
             single_query_mode=False,
             modaliases=sess_modaliases,
             config=sess_config,
-            legacy_mode=legacy_mode)
+            legacy_mode=legacy_mode,
+            graphql_mode=graphql_mode)
 
         return self._compile(ctx=ctx, eql=eql)
 
@@ -639,13 +653,15 @@ class Compiler:
             txid: int,
             eql: bytes,
             json_mode: bool,
-            legacy_mode: bool) -> typing.List[dbstate.QueryUnit]:
+            legacy_mode: bool,
+            graphql_mode: bool) -> typing.List[dbstate.QueryUnit]:
 
         ctx = await self._ctx_from_con_state(
             txid=txid,
             json_mode=json_mode,
             single_query_mode=False,
-            legacy_mode=legacy_mode)
+            legacy_mode=legacy_mode,
+            graphql_mode=graphql_mode)
 
         return self._compile(ctx=ctx, eql=eql)
 

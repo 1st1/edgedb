@@ -23,6 +23,8 @@ import types
 
 import parsing
 
+from edb import errors
+
 from edb.lang.common.exceptions import add_context, get_context
 from edb.lang.common import context as pctx
 from edb.lang.common import lexer
@@ -384,6 +386,10 @@ class Parser:
 
         except lexer.LexError as e:
             raise self.get_exception(e, context=self.context(None)) from e
+
+        except errors.InvalidSyntaxError as e:
+            raise self.get_exception(
+                e, context=self.context(tok), token=tok) from e
 
         return self.parser.start[0].val
 

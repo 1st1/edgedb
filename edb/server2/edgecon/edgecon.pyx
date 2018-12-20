@@ -171,7 +171,7 @@ cdef class EdgeConnection:
                 json_mode)
 
     async def _compile_script(self, bytes eql, bint json_mode,
-                              bint legacy_mode):
+                              bint legacy_mode, bint graphql_mode):
 
         if self.dbview.in_tx:
             return await self.backend.compiler.call(
@@ -179,7 +179,8 @@ cdef class EdgeConnection:
                 self.dbview.txid,
                 eql,
                 json_mode,
-                legacy_mode)
+                legacy_mode,
+                graphql_mode)
         else:
             return await self.backend.compiler.call(
                 'compile_eql_script',
@@ -188,20 +189,22 @@ cdef class EdgeConnection:
                 self.dbview.modaliases,
                 self.dbview.config,
                 json_mode,
-                legacy_mode)
+                legacy_mode,
+                graphql_mode)
 
     async def legacy(self):
         cdef:
             WriteBuffer msg
             WriteBuffer packet
 
-        json_mode = True
+        lang = self.buffer.read_byte()
+        graphql = lang == b'g'
 
         eql = self.buffer.read_null_str()
         if not eql:
             raise errors.BinaryProtocolError('empty query')
 
-        units = await self._compile_script(eql, True, True)
+        units = await self._compile_script(eql, True, True, graphql)
 
         resbuf = []
         for unit in units:
@@ -210,8 +213,13 @@ cdef class EdgeConnection:
                 try:
                     res = await self.backend.pgcon.simple_query(
                         unit.sql, ignore_data=False)
-                except Exception:
+                except Exception as ex:
                     self.dbview.on_error(unit)
+                    if not self.backend.pgcon.in_tx():
+                        # COMMIT command can fail, in which case the
+                        # transaction is finished.  This check workarounds
+                        # that (until a better solution is found.)
+                        self.dbview._new_tx_state()
                     raise
                 else:
                     self.dbview.on_success(unit)
