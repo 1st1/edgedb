@@ -410,8 +410,15 @@ def _normalize_view_ptr_expr(
                 repr(str(base_ptrcls.get_target(
                     ctx.env.schema).get_name(ctx.env.schema)))
             ]
-            raise errors.InvalidLinkTargetError(
-                f'invalid target for link {str(lname)!r}: '
+
+            if ptrcls.is_property(ctx.env.schema):
+                ercls = errors.InvalidPropertyTargetError
+                ptrkind = 'property'
+            else:
+                ercls = errors.InvalidLinkTargetError
+                ptrkind = 'link'
+            raise ercls(
+                f'invalid target for {ptrkind} {str(lname)!r}: '
                 f'{str(ptr_target.get_name(ctx.env.schema))!r} (expecting '
                 f'{" or ".join(expected)})'
             )

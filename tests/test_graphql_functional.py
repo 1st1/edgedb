@@ -32,7 +32,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
                          'graphql_setup.eql')
 
     async def test_graphql_functional_query_01(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 Setting {
                     name
@@ -53,7 +53,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_query_02(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(order: {name: {dir: ASC}}) {
                     name
@@ -93,7 +93,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_query_03(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(filter: {name: {eq: "John"}}) {
                     name
@@ -118,7 +118,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_01(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User {
                     id
@@ -131,7 +131,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         alice = [res for res in result[0][0]['User']
                  if res['name'] == 'Alice'][0]
 
-        result = await self.con.execute(f"""
+        result = await self.query(f"""
             query {{
                 User(filter: {{id: {{eq: "{alice['id']}"}}}}) {{
                     id
@@ -146,7 +146,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_02(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(filter: {
                     name: {eq: "Bob"},
@@ -172,7 +172,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_03(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(filter: {
                     and: [{name: {eq: "Bob"}}, {active: {eq: true}}],
@@ -192,7 +192,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_04(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(filter: {
                     not: {name: {eq: "Bob"}},
@@ -209,7 +209,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_05(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(
                     filter: {
@@ -235,7 +235,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_06(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(
                     filter: {
@@ -261,7 +261,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_07(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(filter: {
                     name: {ilike: "%o%"},
@@ -281,7 +281,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_08(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(filter: {
                     name: {like: "J%"},
@@ -304,7 +304,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_09(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(filter: {
                     name: {ilike: "%e"},
@@ -324,7 +324,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_10(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(
                     order: {
@@ -348,7 +348,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_11(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(
                     order: {
@@ -372,7 +372,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_12(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 Foo(
                     order: {
@@ -394,7 +394,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_13(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 Foo(
                     order: {
@@ -416,7 +416,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_14(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(
                     order: {name: {dir: ASC}},
@@ -436,7 +436,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_15(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 u0: User(
                     order: {name: {dir: ASC}},
@@ -489,7 +489,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
     # requires negative OFFSET to be implemented
     @unittest.expectedFailure
     async def test_graphql_functional_arguments_16(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 u4: User(
                     order: {name: {dir: ASC}},
@@ -531,7 +531,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_arguments_17(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User(filter: {name: {eq: "Jane"}}) {
                     name
@@ -561,7 +561,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_fragment_02(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             fragment userFrag on User {
                 age
                 score
@@ -584,7 +584,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_typename_01(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 User {
                     name
@@ -628,7 +628,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_typename_02(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 __typename
                 __schema {
@@ -645,7 +645,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_schema_01(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 __schema {
                     directives {
@@ -759,7 +759,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_schema_02(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 __schema {
                     mutationType {
@@ -776,7 +776,7 @@ class TestGraphQLFunctional(tb.QueryTestCase):
         }]])
 
     async def test_graphql_functional_schema_03(self):
-        result = await self.con.execute(r"""
+        result = await self.query(r"""
             query {
                 __schema {
                     queryType {

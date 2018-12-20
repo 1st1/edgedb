@@ -499,7 +499,8 @@ class Array(Collection, s_abc.Array):
         stype = subtypes[0]
 
         if isinstance(stype, Array):
-            raise errors.SchemaError(f'nested arrays are not supported')
+            raise errors.UnsupportedFeatureError(
+                f'nested arrays are not supported')
 
         if typemods:
             dimensions = typemods[0]

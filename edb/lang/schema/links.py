@@ -138,6 +138,9 @@ class Link(sources.Source, pointers.Pointer):
     def is_link_property(self, schema):
         return False
 
+    def is_property(self, schema):
+        return False
+
     def scalar(self):
         return False
 

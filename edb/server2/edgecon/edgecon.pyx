@@ -201,10 +201,10 @@ cdef class EdgeConnection:
         if not eql:
             raise errors.BinaryProtocolError('empty query')
 
-        script = await self._compile_script(eql, True, True)
+        units = await self._compile_script(eql, True, True)
 
         resbuf = []
-        for unit in script:
+        for unit in units:
             self.dbview.start(unit)
             if unit.sql:
                 try:
@@ -216,12 +216,16 @@ cdef class EdgeConnection:
                 else:
                     self.dbview.on_success(unit)
 
-                if res:
+                if res is not None:
                     resbuf.extend(r[0] for r in res)
+                else:
+                    resbuf.append(b'null')
+
             else:
                 # SET command or something else that doesn't involve
                 # executing SQL.
                 self.dbview.on_success(unit)
+                resbuf.append(b'null')
 
         resbuf = b'[' + b', '.join(resbuf) + b']'
         msg = WriteBuffer.new_message(b'L')

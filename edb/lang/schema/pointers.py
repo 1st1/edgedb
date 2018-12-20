@@ -361,6 +361,9 @@ class Pointer(constraints.ConsistencySubject, attributes.AttributeSubject,
             'std::source', 'std::target', 'std::id'
         }
 
+    def is_property(self, schema):
+        raise NotImplementedError
+
     def is_protected_pointer(self, schema):
         return (self.is_special_pointer(schema) or
                 self.get_shortname(schema) in {'std::__type__'})

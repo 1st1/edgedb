@@ -301,11 +301,7 @@ cdef class PGProto:
         self.write(buf.end_message())
 
         exc = None
-
-        if ignore_data:
-            result = None
-        else:
-            result = []
+        result = None
 
         self.waiting_for_sync = True
 
@@ -324,6 +320,8 @@ cdef class PGProto:
                         for i in range(ncol):
                             coll = self.buffer.read_int32()
                             row.append(self.buffer.read_bytes(coll))
+                        if result is None:
+                            result = []
                         result.append(row)
 
                 elif mtype == b'T':

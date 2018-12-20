@@ -86,6 +86,9 @@ class Property(pointers.Pointer):
                 similarity /= target_coef
         return similarity
 
+    def is_property(self, schema):
+        return True
+
     @classmethod
     def merge_targets(cls, schema, ptr, t1, t2):
         if ptr.is_endpoint_pointer(schema):

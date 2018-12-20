@@ -77,7 +77,7 @@ def ast_to_typeref(
                     type_name = str(si)
 
                 if named is not None and unnamed is not None:
-                    raise errors.InvalidReferenceError(
+                    raise errors.EdgeQLSyntaxError(
                         f'mixing named and unnamed tuple declaration '
                         f'is not supported',
                         context=node.subtypes[0].context,

@@ -57,9 +57,13 @@ class EdgeDBError(Exception, metaclass=EdgeDBErrorMeta):
         if isinstance(context, pctx.ParserContext):
             self._attrs['L'] = context.start.line
             self._attrs['C'] = context.start.column
+            self.set_source_context(context)
+
+        self.set_hint_and_details(hint, details)
 
         if details:
             msg = f'{msg}\n\nDETAILS: {details}'
+
         super().__init__(msg)
 
     @classmethod

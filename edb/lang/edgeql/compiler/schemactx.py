@@ -69,16 +69,11 @@ def get_schema_object(
             name=name, module_aliases=ctx.modaliases,
             type=item_types)
 
-    except errors.InvalidReferenceError as e:
-        qlerror = errors.QueryError(e.args[0], context=srcctx)
+    except errors.QueryError as e:
         s_utils.enrich_schema_lookup_error(
-            qlerror, name, modaliases=ctx.modaliases, schema=ctx.env.schema,
+            e, name, modaliases=ctx.modaliases, schema=ctx.env.schema,
             item_types=item_types)
-
-        raise qlerror from e
-
-    except errors.SchemaError as e:
-        raise errors.QueryError(e.args[0], context=srcctx) from e
+        raise
 
     result = ctx.aliased_views.get(stype.get_name(ctx.env.schema))
     if result is None:

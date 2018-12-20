@@ -44,7 +44,7 @@ class EdgeQLParserBase(parsing.Parser):
                 else:
                     msg = f'Unexpected {token.text!r}'
 
-        return errors.EdgeQLSyntaxError(msg, context=context, token=token)
+        return errors.EdgeQLSyntaxError(msg, context=context)
 
     def get_lexer(self):
         return lexer.EdgeQLLexer()

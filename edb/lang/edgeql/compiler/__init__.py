@@ -169,7 +169,7 @@ def compile_func_to_ir(func, schema, *,
 
     trees = ql_parser.parse_block(func.get_code(schema) + ';')
     if len(trees) != 1:
-        raise errors.QueryError(
+        raise errors.InvalidFunctionDefinitionError(
             'functions can only contain one statement')
 
     tree = trees[0]

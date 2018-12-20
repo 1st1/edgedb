@@ -697,7 +697,7 @@ class CreateFunction(CreateCallableObject, FunctionCommand):
         if (language == qlast.Language.EdgeQL and
                 any(p.get_typemod(schema) is ft.TypeModifier.SET_OF
                     for p in params.objects(schema))):
-            raise errors.InvalidFunctionDefinitionError(
+            raise errors.UnsupportedFeatureError(
                 f'cannot create the `{signature}` function: '
                 f'SET OF parameters in user-defined EdgeQL functions are '
                 f'not supported',

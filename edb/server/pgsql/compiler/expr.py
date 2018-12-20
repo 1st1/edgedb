@@ -21,6 +21,8 @@
 
 import typing
 
+from edb import errors
+
 from edb.lang.edgeql import functypes as ql_ft
 
 from edb.lang.ir import ast as irast
@@ -255,7 +257,8 @@ def compile_IndexIndirection(
     # line, column and filename are captured here to be used with the
     # error message
     srcctx = pgast.StringConstant(
-        val=irutils.get_source_context_as_json(expr.index))
+        val=irutils.get_source_context_as_json(expr.index,
+                                               errors.InvalidValueError))
 
     with ctx.new() as subctx:
         subctx.expr_exposed = False

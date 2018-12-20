@@ -40,6 +40,8 @@ class PGError(enum.Enum):
     CheckViolationError = '23514'
     ExclusionViolationError = '23P01'
 
+    NumericValueOutOfRange = '22003'
+
 
 constraint_errors = frozenset({
     PGError.IntegrityConstraintViolationError,
@@ -94,8 +96,7 @@ def interpret_backend_error(schema, fields):
             pname = f'{source_name}.{pointer_name}'
 
             return errors.MissingRequiredError(
-                f'missing value for required property {pname}',
-                source_name=source_name, pointer_name=pointer_name)
+                f'missing value for required property {pname}')
 
         else:
             return errors.InternalServerError(message)
@@ -167,8 +168,10 @@ def interpret_backend_error(schema, fields):
                 constraint.format_error_message(schema))
 
         elif error_type == 'id':
-            msg = 'unique link constraint violation'
-            errcls = errors.ConstraintViolationError
-            return errcls(msg=msg)
+            return errors.ConstraintViolationError(
+                'unique link constraint violation')
+
+    elif code == PGError.NumericValueOutOfRange:
+        return errors.NumericOutOfRangeError(message)
 
     return errors.InternalServerError(message)

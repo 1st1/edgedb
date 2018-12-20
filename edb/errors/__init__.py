@@ -60,6 +60,7 @@ __all__ = base.__all__ + (
     'ExecutionError',
     'InvalidValueError',
     'DivisionByZeroError',
+    'NumericOutOfRangeError',
     'IntegrityError',
     'ConstraintViolationError',
     'CardinalityViolationError',
@@ -271,6 +272,10 @@ class InvalidValueError(ExecutionError):
 
 class DivisionByZeroError(InvalidValueError):
     _code = 0x_05_01_00_01
+
+
+class NumericOutOfRangeError(InvalidValueError):
+    _code = 0x_05_01_00_02
 
 
 class IntegrityError(ExecutionError):
