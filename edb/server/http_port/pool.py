@@ -17,31 +17,11 @@
 #
 
 
-import immutables
-
-from . import setting as cs
-from . import types as ct
-
-from .config import Config
+import asyncio
 
 
-__all__ = ('configs', 'Config')
+class BasePool:
 
-
-configs = immutables.Map(
-    __internal_no_const_folding=cs.setting(
-        type=bool,
-        default=False,
-        level=cs.ConfigLevel.SESSION),
-
-    __internal_testmode=cs.setting(
-        type=bool,
-        default=False,
-        level=cs.ConfigLevel.SESSION),
-
-    ports=cs.setting(
-        type=ct.Port,
-        default=frozenset(),
-        level=cs.ConfigLevel.SYSTEM,
-        is_set=True)
-)
+    def __init__(self, size: int):
+        self._size = size
+        self._queue = asyncio.LifoQueue()

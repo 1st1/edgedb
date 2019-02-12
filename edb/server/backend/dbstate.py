@@ -27,6 +27,7 @@ import immutables
 from edb import errors
 
 from edb.schema import schema as s_schema
+from edb.server import config
 
 from . import enums
 from . import sertypes
@@ -162,7 +163,7 @@ class TransactionState(typing.NamedTuple):
     name: str
     schema: s_schema.Schema
     modaliases: immutables.Map
-    config: immutables.Map
+    config: config.Config
 
 
 class Transaction:
@@ -170,7 +171,7 @@ class Transaction:
     def __init__(self, constate,
                  schema: s_schema.Schema,
                  modaliases: immutables.Map,
-                 config: immutables.Map, *,
+                 config: config.Config, *,
                  implicit=True):
 
         self._constate = constate
@@ -293,7 +294,7 @@ class Transaction:
     def get_modaliases(self) -> immutables.Map:
         return self._stack[-1].modaliases
 
-    def get_config(self) -> immutables.Map:
+    def get_config(self) -> config.Config:
         return self._stack[-1].config
 
     def update_schema(self, new_schema: s_schema.Schema):
@@ -302,7 +303,7 @@ class Transaction:
     def update_modaliases(self, new_modaliases: immutables.Map):
         self._stack[-1] = self._stack[-1]._replace(modaliases=new_modaliases)
 
-    def update_config(self, new_config: immutables.Map):
+    def update_config(self, new_config: config.Config):
         self._stack[-1] = self._stack[-1]._replace(config=new_config)
 
 

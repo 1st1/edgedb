@@ -349,6 +349,21 @@ class TestServerProto(tb.QueryTestCase):
             '''),
             [0])
 
+    async def test_server_proto_set_reset_alias_04(self):
+        with self.assertRaisesRegex(
+                edgedb.ConfigurationError,
+                "unknown CONFIG setting 'blahhhhhh'"):
+
+            await self.con.execute('''
+                SET ALIAS foo AS MODULE std,
+                    CONFIG blahhhhhh := 123;
+            ''')
+
+        with self.assertRaisesRegex(
+                edgedb.InvalidReferenceError,
+                'non-existent function: foo::min'):
+            await self.con.fetch('SELECT foo::min({3})')
+
     async def test_server_proto_basic_datatypes_01(self):
         for _ in range(10):
             self.assertEqual(

@@ -15,33 +15,3 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
-
-import immutables
-
-from . import setting as cs
-from . import types as ct
-
-from .config import Config
-
-
-__all__ = ('configs', 'Config')
-
-
-configs = immutables.Map(
-    __internal_no_const_folding=cs.setting(
-        type=bool,
-        default=False,
-        level=cs.ConfigLevel.SESSION),
-
-    __internal_testmode=cs.setting(
-        type=bool,
-        default=False,
-        level=cs.ConfigLevel.SESSION),
-
-    ports=cs.setting(
-        type=ct.Port,
-        default=frozenset(),
-        level=cs.ConfigLevel.SYSTEM,
-        is_set=True)
-)

@@ -90,7 +90,7 @@ def compile_bootstrap_script(std_schema: s_schema.Schema,
         0,
         schema,
         EMPTY_MAP,
-        EMPTY_MAP,
+        config.Config.from_map(EMPTY_MAP),
         enums.Capability.ALL)
 
     ctx = CompileContext(
@@ -214,8 +214,7 @@ class Compiler:
             single_stmt_mode
         )
 
-        disable_constant_folding = config.get(
-            '__internal_no_const_folding', False)
+        disable_constant_folding = config.get('__internal_no_const_folding')
 
         ir = ql_compiler.compile_ast_to_ir(
             ql,
@@ -442,7 +441,7 @@ class Compiler:
 
         elif isinstance(ql, qlast.CommitTransaction):
             new_state: dbstate.TransactionState = ctx.state.commit_tx()
-            config = new_state.config
+            config = new_state.config.as_map()
             modaliases = new_state.modaliases
 
             sql = (b'COMMIT',)
@@ -452,7 +451,7 @@ class Compiler:
 
         elif isinstance(ql, qlast.RollbackTransaction):
             new_state: dbstate.TransactionState = ctx.state.rollback_tx()
-            config = new_state.config
+            config = new_state.config.as_map()
             modaliases = new_state.modaliases
 
             sql = (b'ROLLBACK',)
@@ -494,7 +493,7 @@ class Compiler:
             tx = ctx.state.current_tx()
             new_state: dbstate.TransactionState = tx.rollback_to_savepoint(
                 ql.name)
-            config = new_state.config
+            config = new_state.config.as_map()
             modaliases = new_state.modaliases
 
             pgname = pg_common.quote_ident(ql.name)
@@ -520,7 +519,7 @@ class Compiler:
         schema = current_tx.get_schema()
 
         aliases = ctx.state.current_tx().get_modaliases()
-        config_vals = {}
+        config_vals = ctx.state.current_tx().get_config()
 
         single_unit = False
 
@@ -552,7 +551,7 @@ class Compiler:
                     sql = alias_tpl(item.alias, item.module)
                     sqlbuf.append(sql)
 
-            elif isinstance(item, qlast.SessionSetConfigAssignDecl):
+            elif isinstance(item, qlast.BaseSessionConfigSet):
                 if item.system:
                     if not current_tx.is_implicit():
                         raise errors.QueryError(
@@ -569,15 +568,39 @@ class Compiler:
                         f'invalid SET expression: '
                         f'unknown CONFIG setting {name!r}')
 
-                if item.system and not setting.is_system():
+                if item.system and not setting.is_system:
                     raise errors.QueryError(
                         f'{name!r} is not a system-level config')
-                if not item.system and setting.is_system():
+                if not item.system and setting.is_system:
                     raise errors.QueryError(
                         f'{name!r} is a system-level config')
 
-                config_vals[name] = setting.value_from_qlast(
+                config_val = setting.value_from_qlast(
                     self._std_schema, item.expr)
+
+                if setting.is_set:
+                    if isinstance(item, qlast.SessionSetConfigAssignDecl):
+                        raise errors.ConfigurationError(
+                            f'invalid SET expression: '
+                            f'cannot use := on set config settings')
+
+                    if isinstance(item, qlast.SessionSetConfigAddAssignDecl):
+                        config_vals = config_vals.add(name, config_val)
+                    elif isinstance(item, qlast.SessionSetConfigRemAssignDecl):
+                        config_vals = config_vals.discard(name, config_val)
+
+                else:
+                    if isinstance(item, qlast.SessionSetConfigAddAssignDecl):
+                        raise errors.ConfigurationError(
+                            f'invalid SET expression: '
+                            f'cannot use += on scalar config settings')
+
+                    if isinstance(item, qlast.SessionSetConfigRemAssignDecl):
+                        raise errors.ConfigurationError(
+                            f'invalid SET expression: '
+                            f'cannot use -= on scalar config settings')
+
+                    config_vals = config_vals.set(name, config_val)
 
                 item_expr_ql = ql_codegen.generate_source(item.expr)
 
@@ -625,10 +648,7 @@ class Compiler:
                     f'unsupported SET command type {type(item)!r}')
 
         ctx.state.current_tx().update_modaliases(aliases)
-
-        if config_vals:
-            ctx.state.current_tx().update_config(
-                ctx.state.current_tx().get_config().update(config_vals))
+        ctx.state.current_tx().update_config(config_vals)
 
         if len(sqlbuf) == 1:
             sql = sqlbuf[0]
@@ -775,7 +795,7 @@ class Compiler:
                     unit.singleton_result = True
 
                 if ctx.state.current_tx().is_implicit():
-                    unit.config = ctx.state.current_tx().get_config()
+                    unit.config = ctx.state.current_tx().get_config().as_map()
                     unit.modaliases = ctx.state.current_tx().get_modaliases()
 
                 unit.has_set = True
@@ -803,16 +823,21 @@ class Compiler:
         return units
 
     async def _ctx_new_con_state(self, *, dbver: int, json_mode: bool,
-                                 modaliases, config,
+                                 modaliases,
+                                 config_vals: immutables.Map,
                                  stmt_mode: enums.CompileStatementMode,
                                  capability: enums.Capability):
 
         assert isinstance(modaliases, immutables.Map)
-        assert isinstance(config, immutables.Map)
+        assert isinstance(config_vals, immutables.Map)
 
         db = await self._get_database(dbver)
         self._current_db_state = dbstate.CompilerConnectionState(
-            dbver, db.schema, modaliases, config, capability)
+            dbver,
+            db.schema,
+            modaliases,
+            config.Config.from_map(config_vals),
+            capability)
 
         state = self._current_db_state
 
@@ -906,7 +931,7 @@ class Compiler:
             dbver=dbver,
             json_mode=False,
             modaliases=sess_modaliases,
-            config=sess_config,
+            config_vals=sess_config,
             stmt_mode=enums.CompileStatementMode.SINGLE,
             capability=enums.Capability.QUERY)
 
@@ -933,7 +958,7 @@ class Compiler:
             dbver=dbver,
             json_mode=json_mode,
             modaliases=sess_modaliases,
-            config=sess_config,
+            config_vals=sess_config,
             stmt_mode=enums.CompileStatementMode(stmt_mode),
             capability=capability)
 

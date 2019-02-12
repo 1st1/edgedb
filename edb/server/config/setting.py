@@ -29,6 +29,8 @@ from edb.edgeql import parser as ql_parser
 
 from edb.ir import staeval as ireval
 
+from . import types as config_types
+
 
 class ConfigLevel(enum.Flag):
 
@@ -42,7 +44,9 @@ class setting:
     type: type
     default: object
     level: ConfigLevel
+    is_set: bool = False
 
+    @property
     def is_system(self):
         return bool(self.level & ConfigLevel.SYSTEM)
 
@@ -55,11 +59,15 @@ class setting:
         except ireval.StaticEvaluationError:
             raise errors.QueryError('invalid CONFIG value')
         else:
-            if not isinstance(val, self.type):
+            if issubclass(self.type, config_types.ConfigType):
+                val = self.type.from_pyvalue(val)
+
+            elif not isinstance(val, self.type):
                 dispname = val_ir.stype.get_displayname(std_schema)
                 raise errors.ConfigurationError(
                     f'expected a {self.type.__name__} value, '
                     f'got {dispname!r}')
+
             return val
 
     @functools.lru_cache()

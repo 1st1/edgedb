@@ -17,31 +17,16 @@
 #
 
 
-import immutables
-
-from . import setting as cs
-from . import types as ct
-
-from .config import Config
+# import json
+import os
 
 
-__all__ = ('configs', 'Config')
+class ConfigManager:
 
+    def __init__(self, *, data_dir):
+        self._data_dir = data_dir
+        self._sys_fn = os.path.join(self._data_dir, 'sysconf.json')
 
-configs = immutables.Map(
-    __internal_no_const_folding=cs.setting(
-        type=bool,
-        default=False,
-        level=cs.ConfigLevel.SESSION),
-
-    __internal_testmode=cs.setting(
-        type=bool,
-        default=False,
-        level=cs.ConfigLevel.SESSION),
-
-    ports=cs.setting(
-        type=ct.Port,
-        default=frozenset(),
-        level=cs.ConfigLevel.SYSTEM,
-        is_set=True)
-)
+    # def load(self):
+    #     if os.path.exists(self._sys_fn):
+    #         with open(self._)
