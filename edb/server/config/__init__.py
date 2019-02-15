@@ -21,6 +21,7 @@ import immutables
 
 from . import setting as cs
 from . import types as ct
+from . import spec
 
 from .config import Config
 
@@ -44,4 +45,22 @@ configs = immutables.Map(
         default=frozenset(),
         level=cs.ConfigLevel.SYSTEM,
         is_set=True)
+)
+
+
+settings = spec.Spec(
+    spec.Setting(
+        '__internal_no_const_folding',
+        type=bool, default=False,
+        internal=True),
+
+    spec.Setting(
+        '__internal_testmode',
+        type=bool, default=False,
+        internal=True),
+
+    spec.Setting(
+        'ports',
+        type=ct.Port, set_of=True, default=frozenset(),
+        system=True),
 )

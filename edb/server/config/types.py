@@ -18,6 +18,7 @@
 
 
 import dataclasses
+import json
 
 from edb import errors
 
@@ -29,6 +30,16 @@ class ConfigType:
         """Subclasses override this to allow creation from Python scalars."""
         raise NotImplementedError
 
+    @classmethod
+    def from_json(cls, v):
+        raise NotImplementedError
+
+    def to_json(self):
+        raise NotImplementedError
+
+    def to_edgeql(self):
+        raise NotImplementedError
+
 
 @dataclasses.dataclass(frozen=True, eq=True)
 class Port(ConfigType):
@@ -36,6 +47,20 @@ class Port(ConfigType):
     protocol: str
     database: str
     port: int
+    concurrency: int
+
+    @classmethod
+    def from_json(cls, s):
+        return cls.from_pyvalue(s)
+
+    def to_json(self):
+        return ';'.join(
+            f'{field}={json.dumps(getattr(self, field))}'
+            for field in type(self).__dataclass_fields__
+        )
+
+    def to_edgeql(self):
+        return repr(self.to_json())
 
     @classmethod
     def from_pyvalue(cls, s):

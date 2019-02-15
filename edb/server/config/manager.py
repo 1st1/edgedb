@@ -21,12 +21,7 @@
 import os
 
 
-class ConfigManager:
+class BaseConfig:
 
-    def __init__(self, *, data_dir):
-        self._data_dir = data_dir
-        self._sys_fn = os.path.join(self._data_dir, 'sysconf.json')
-
-    # def load(self):
-    #     if os.path.exists(self._sys_fn):
-    #         with open(self._)
+    def __init__(self):
+        pass
