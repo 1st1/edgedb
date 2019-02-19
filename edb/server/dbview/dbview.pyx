@@ -17,6 +17,7 @@
 #
 
 
+import os.path
 import time
 import typing
 
@@ -24,7 +25,7 @@ import immutables
 
 from edb import errors
 from edb.common import lru
-from edb.server import defines
+from edb.server import defines, config
 from edb.server.backend import dbstate
 
 
@@ -36,9 +37,11 @@ cdef class Database:
     # Global LRU cache of compiled anonymous queries
     _eql_to_compiled: typing.Mapping[bytes, dbstate.QueryUnit]
 
-    def __init__(self, name):
+    def __init__(self, DatabaseIndex index, str name):
         self._name = name
         self._dbver = time.monotonic_ns()
+
+        self._index = index
 
         self._eql_to_compiled = lru.LRUMapping(
             maxsize=defines._MAX_QUERIES_CACHE)
@@ -203,8 +206,8 @@ cdef class DatabaseConnectionView:
         if not self._in_tx and query_unit.has_ddl:
             self._db._signal_ddl()
 
-        if query_unit.config is not None:
-            self._config = query_unit.config
+        if query_unit.config_ops is not None:
+            self.apply_config_ops(query_unit.config_ops)
 
         if query_unit.modaliases is not None:
             self._modaliases = query_unit.modaliases
@@ -226,6 +229,14 @@ cdef class DatabaseConnectionView:
             # is executed outside of a tx.
             self._reset_tx_state()
 
+    cdef apply_config_ops(self, ops):
+        for op in ops:
+            if op.level is config.OpLevel.SYSTEM:
+                self._db._index.apply_system_config_op(op)
+            else:
+                self._config = config.apply(
+                    config.settings, self._config, op)
+
     @staticmethod
     def raise_in_tx_error():
         raise errors.TransactionError(
@@ -233,18 +244,32 @@ cdef class DatabaseConnectionView:
             'commands ignored until end of transaction block')
 
 
-class DatabaseIndex:
+cdef class DatabaseIndex:
 
-    def __init__(self):
+    def __init__(self, data_dir):
         self._dbs = {}
+
+        self._data_dir = data_dir
+
+        self._sys_config = immutables.Map()
+        self._sys_config_ver = time.monotonic_ns()
 
     def _get_db(self, dbname):
         try:
             db = self._dbs[dbname]
         except KeyError:
-            db = Database(dbname)
+            db = Database(self, dbname)
             self._dbs[dbname] = db
         return db
+
+    cdef apply_system_config_op(self, op):
+        self._sys_config = config.apply(
+            config.settings, self._sys_config, op)
+
+        with open(os.path.join(self._data_dir, 'config_sys.json'), 'wt') as f:
+            f.write(config.to_json(config.settings, self._sys_config))
+
+        self._sys_config_ver = time.monotonic_ns()
 
     def new_view(self, dbname: str, *, user: str, query_cache: bool):
         db = self._get_db(dbname)

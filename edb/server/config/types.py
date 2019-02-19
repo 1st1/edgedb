@@ -55,7 +55,7 @@ class Port(ConfigType):
 
     def to_json(self):
         return ';'.join(
-            f'{field}={json.dumps(getattr(self, field))}'
+            f'{field}={str(getattr(self, field))}'
             for field in type(self).__dataclass_fields__
         )
 

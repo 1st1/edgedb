@@ -42,6 +42,8 @@ from edb.edgeql import quote as ql_quote
 from edb.edgeql import qltypes
 from edb.edgeql import parser as ql_parser
 
+from edb.ir import staeval as ireval
+
 from edb.schema import database as s_db
 from edb.schema import ddl as s_ddl
 from edb.schema import delta as s_delta
@@ -90,7 +92,7 @@ def compile_bootstrap_script(std_schema: s_schema.Schema,
         0,
         schema,
         EMPTY_MAP,
-        config.Config.from_map(EMPTY_MAP),
+        EMPTY_MAP,
         enums.Capability.ALL)
 
     ctx = CompileContext(
@@ -169,14 +171,19 @@ class Compiler:
             h.update(val)
         return h.hexdigest().encode('latin1')
 
-    def _new_delta_context(self, ctx: CompileContext):
+    def _in_testmode(self, ctx: CompileContext):
         current_tx = ctx.state.current_tx()
-        config = current_tx.get_config()
+        session_config = current_tx.get_session_config()
 
+        return config.lookup(
+            config.settings,
+            '__internal_testmode',
+            session_config)
+
+    def _new_delta_context(self, ctx: CompileContext):
         context = s_delta.CommandContext()
-        context.testmode = bool(config.get('__internal_testmode'))
+        context.testmode = self._in_testmode(ctx)
         context.stdmode = self._bootstrap_mode
-
         return context
 
     def _process_delta(self, ctx: CompileContext, delta, schema):
@@ -201,7 +208,7 @@ class Compiler:
             ql: qlast.Base) -> dbstate.BaseQuery:
 
         current_tx = ctx.state.current_tx()
-        config = current_tx.get_config()
+        session_config = current_tx.get_session_config()
 
         native_out_format = (
             ctx.output_format is pg_compiler.OutputFormat.NATIVE
@@ -214,7 +221,10 @@ class Compiler:
             single_stmt_mode
         )
 
-        disable_constant_folding = config.get('__internal_no_const_folding')
+        disable_constant_folding = config.lookup(
+            config.settings,
+            '__internal_no_const_folding',
+            session_config)
 
         ir = ql_compiler.compile_ast_to_ir(
             ql,
@@ -382,7 +392,8 @@ class Compiler:
             ql,
             schema=schema,
             modaliases=current_tx.get_modaliases(),
-            testmode=bool(current_tx.get_config().get('__internal_testmode')))
+            testmode=self._in_testmode(ctx),
+        )
 
         return self._compile_command(ctx, cmd)
 
@@ -395,7 +406,7 @@ class Compiler:
             ql,
             schema=schema,
             modaliases=current_tx.get_modaliases(),
-            testmode=bool(current_tx.get_config().get('__internal_testmode')))
+            testmode=self._in_testmode(ctx))
 
         if (isinstance(ql, qlast.CreateDelta) and
                 cmd.get_attribute_value('target')):
@@ -420,7 +431,6 @@ class Compiler:
         cacheable = True
         single_unit = False
 
-        config = None
         modaliases = None
 
         if isinstance(ql, qlast.StartTransaction):
@@ -441,7 +451,6 @@ class Compiler:
 
         elif isinstance(ql, qlast.CommitTransaction):
             new_state: dbstate.TransactionState = ctx.state.commit_tx()
-            config = new_state.config.as_map()
             modaliases = new_state.modaliases
 
             sql = (b'COMMIT',)
@@ -451,7 +460,6 @@ class Compiler:
 
         elif isinstance(ql, qlast.RollbackTransaction):
             new_state: dbstate.TransactionState = ctx.state.rollback_tx()
-            config = new_state.config.as_map()
             modaliases = new_state.modaliases
 
             sql = (b'ROLLBACK',)
@@ -493,7 +501,6 @@ class Compiler:
             tx = ctx.state.current_tx()
             new_state: dbstate.TransactionState = tx.rollback_to_savepoint(
                 ql.name)
-            config = new_state.config.as_map()
             modaliases = new_state.modaliases
 
             pgname = pg_common.quote_ident(ql.name)
@@ -510,7 +517,6 @@ class Compiler:
             action=action,
             cacheable=cacheable,
             single_unit=single_unit,
-            config=config,
             modaliases=modaliases)
 
     def _compile_ql_sess_state(self, ctx: CompileContext,
@@ -519,17 +525,19 @@ class Compiler:
         schema = current_tx.get_schema()
 
         aliases = ctx.state.current_tx().get_modaliases()
-        config_vals = ctx.state.current_tx().get_config()
+        session_config = ctx.state.current_tx().get_session_config()
 
-        single_unit = False
+        config_ops = []
+        has_system_settings = False
 
         sqlbuf = []
 
         alias_tpl = lambda alias, module: f'''
-            INSERT INTO _edgecon_state(name, value, type)
+            INSERT INTO _edgecon_state(name, value, edgeql_value, type)
             VALUES (
                 {pg_ql(alias or '')},
                 {pg_ql(module)},
+                NULL,
                 'A'
             )
             ON CONFLICT (name, type) DO
@@ -557,37 +565,45 @@ class Compiler:
                         raise errors.QueryError(
                             'SET SYSTEM commands must not be executed in '
                             'a transaction')
-
-                    single_unit = True
+                    has_system_settings = True
 
                 name = item.alias
                 try:
-                    setting = config.configs[name]
+                    setting = config.settings[name]
                 except KeyError:
                     raise errors.ConfigurationError(
                         f'invalid SET expression: '
                         f'unknown CONFIG setting {name!r}')
 
-                if item.system and not setting.is_system:
+                if item.system and setting.internal:
                     raise errors.QueryError(
-                        f'{name!r} is not a system-level config')
-                if not item.system and setting.is_system:
+                        f'{name!r} is not a system-level config setting; '
+                        f'use "SET CONFIG {name}" command')
+                if not item.system and setting.system:
                     raise errors.QueryError(
-                        f'{name!r} is a system-level config')
+                        f'{name!r} is a system-level config setting; '
+                        f'use "SET SYSTEM CONFIG {name}" command')
 
-                config_val = setting.value_from_qlast(
-                    self._std_schema, item.expr)
+                try:
+                    val_ir = ql_compiler.compile_ast_fragment_to_ir(
+                        item.expr, schema=self._std_schema)
+                    config_val = ireval.evaluate_to_python_val(
+                        val_ir.expr, schema=self._std_schema)
+                except ireval.StaticEvaluationError:
+                    raise errors.QueryError(
+                        f'invalid CONFIG value for the {name!r} setting')
 
-                if setting.is_set:
+                opcode = None
+                if setting.set_of:
                     if isinstance(item, qlast.SessionSetConfigAssignDecl):
                         raise errors.ConfigurationError(
                             f'invalid SET expression: '
                             f'cannot use := on set config settings')
 
                     if isinstance(item, qlast.SessionSetConfigAddAssignDecl):
-                        config_vals = config_vals.add(name, config_val)
+                        opcode = config.OpCode.CONFIG_ADD
                     elif isinstance(item, qlast.SessionSetConfigRemAssignDecl):
-                        config_vals = config_vals.discard(name, config_val)
+                        opcode = config.OpCode.CONFIG_REM
 
                 else:
                     if isinstance(item, qlast.SessionSetConfigAddAssignDecl):
@@ -600,22 +616,45 @@ class Compiler:
                             f'invalid SET expression: '
                             f'cannot use -= on scalar config settings')
 
-                    config_vals = config_vals.set(name, config_val)
+                    opcode = config.OpCode.CONFIG_SET
+
+                op = config.Operation(
+                    opcode,
+                    (config.OpLevel.SYSTEM
+                        if item.system else config.OpLevel.SESSION),
+                    name,
+                    config_val
+                )
+                config_ops.append(op)
+
+                if not item.system:
+                    session_config = config.apply(
+                        config.settings,
+                        session_config,
+                        op)
 
                 item_expr_ql = ql_codegen.generate_source(item.expr)
 
-                if not self._bootstrap_mode:
+                if not self._bootstrap_mode and not item.system:
+                    # We only want to persist session-level config
+                    # changes in the temporary table.  System-level
+                    # configs are persisted in a JSON file in the
+                    # data-dir.
                     sql = f'''
-                        INSERT INTO _edgecon_state(name, value, type)
+                        INSERT INTO
+                            _edgecon_state(name, value, edgeql_value, type)
                         VALUES (
                             {pg_ql(name)},
-                            {pg_ql(item_expr_ql)},
+                            {pg_ql(config.value_to_json(
+                                setting, config_val))},
+                            {pg_ql(config.value_to_json_edgeql(
+                                setting, config_val))},
                             'C'
                         )
                         ON CONFLICT (name, type) DO
                         UPDATE
                             SET value = {pg_ql(item_expr_ql)};
-                        '''
+                    '''
                     sqlbuf.append(sql.encode())
 
             elif isinstance(item, qlast.SessionResetModule):
@@ -629,7 +668,7 @@ class Compiler:
                 aliases = immutables.Map({None: defines.DEFAULT_MODULE_ALIAS})
 
                 if not self._bootstrap_mode:
-                    sql = b'DELETE FROM _edgecon_state s;'
+                    sql = b"DELETE FROM _edgecon_state s WHERE s.type = 'A';"
                     sql += alias_tpl('', defines.DEFAULT_MODULE_ALIAS)
                     sqlbuf.append(sql)
 
@@ -639,7 +678,7 @@ class Compiler:
                 if not self._bootstrap_mode:
                     sql = f'''
                         DELETE FROM _edgecon_state s
-                        WHERE s.name = {pg_ql(item.alias)};
+                        WHERE s.name = {pg_ql(item.alias)} AND s.type = 'A';
                     '''.encode()
                     sqlbuf.append(sql)
 
@@ -648,7 +687,7 @@ class Compiler:
                     f'unsupported SET command type {type(item)!r}')
 
         ctx.state.current_tx().update_modaliases(aliases)
-        ctx.state.current_tx().update_config(config_vals)
+        ctx.state.current_tx().update_session_config(session_config)
 
         if len(sqlbuf) == 1:
             sql = sqlbuf[0]
@@ -661,7 +700,9 @@ class Compiler:
 
         return dbstate.SessionStateQuery(
             sql=(sql,),
-            single_unit=single_unit)
+            has_system_settings=has_system_settings,
+            config_ops=config_ops if config_ops else None,
+        )
 
     def _compile_dispatch_ql(self, ctx: CompileContext, ql: qlast.Base):
 
@@ -710,6 +751,8 @@ class Compiler:
         eql = eql.decode()
 
         statements = edgeql.parse_block(eql)
+        statements_len = len(statements)
+
         if ctx.stmt_mode is enums.CompileStatementMode.SKIP_FIRST:
             statements = statements[1:]
             if not statements:  # pragma: no cover
@@ -718,9 +761,9 @@ class Compiler:
                 # before using SKIP_FIRST.
                 raise errors.ProtocolError(
                     f'no statements to compile in SKIP_FIRST mode')
-        elif single_stmt_mode and len(statements) > 1:
+        elif single_stmt_mode and statements_len > 1:
             raise errors.ProtocolError(
-                f'expected one statement, got {len(statements)}')
+                f'expected one statement, got {statements_len}')
 
         units = []
         unit = None
@@ -728,7 +771,9 @@ class Compiler:
         for stmt in statements:
             comp: dbstate.BaseQuery = self._compile_dispatch_ql(ctx, stmt)
 
-            if unit is not None and comp.single_unit:
+            if (unit is not None and
+                    isinstance(comp, dbstate.TxControlQuery) and
+                    comp.single_unit):
                 units.append(unit)
                 unit = None
 
@@ -770,12 +815,13 @@ class Compiler:
                 if single_stmt_mode:
                     unit.singleton_result = True
 
-                if comp.config is not None:
-                    unit.config = comp.config
                 if comp.modaliases is not None:
                     unit.modaliases = comp.modaliases
 
                 if comp.action == dbstate.TxAction.START:
+                    if unit.tx_id is not None:
+                        raise errors.InternalServerError(
+                            'already in transaction')
                     unit.tx_id = ctx.state.current_tx().id
                 elif comp.action == dbstate.TxAction.COMMIT:
                     unit.tx_commit = True
@@ -791,12 +837,23 @@ class Compiler:
             elif isinstance(comp, dbstate.SessionStateQuery):
                 unit.sql += comp.sql
 
+                if comp.has_system_settings and (
+                        not ctx.state.current_tx().is_implicit() or
+                        statements_len > 1):
+                    raise errors.QueryError(
+                        'SET SYSTEM CONFIG cannot be executed in a '
+                        'transaction block')
+
                 if single_stmt_mode:
                     unit.singleton_result = True
 
                 if ctx.state.current_tx().is_implicit():
-                    unit.config = ctx.state.current_tx().get_config().as_map()
                     unit.modaliases = ctx.state.current_tx().get_modaliases()
+
+                if comp.config_ops:
+                    if unit.config_ops is None:
+                        unit.config_ops = []
+                    unit.config_ops.extend(comp.config_ops)
 
                 unit.has_set = True
 
@@ -808,8 +865,7 @@ class Compiler:
 
         for unit in units:  # pragma: no cover
             # Sanity checks
-            if unit.cacheable and (unit.config is not None or
-                                   unit.modaliases is not None):
+            if unit.cacheable and (unit.config_ops or unit.modaliases):
                 raise errors.InternalServerError(
                     f'QueryUnit {unit!r} is cacheable but has config/aliases')
             if not unit.sql:
@@ -824,19 +880,19 @@ class Compiler:
 
     async def _ctx_new_con_state(self, *, dbver: int, json_mode: bool,
                                  modaliases,
-                                 config_vals: immutables.Map,
+                                 session_config: immutables.Map,
                                  stmt_mode: enums.CompileStatementMode,
                                  capability: enums.Capability):
 
         assert isinstance(modaliases, immutables.Map)
-        assert isinstance(config_vals, immutables.Map)
+        assert isinstance(session_config, immutables.Map)
 
         db = await self._get_database(dbver)
         self._current_db_state = dbstate.CompilerConnectionState(
             dbver,
             db.schema,
             modaliases,
-            config.Config.from_map(config_vals),
+            session_config,
             capability)
 
         state = self._current_db_state
@@ -931,7 +987,7 @@ class Compiler:
             dbver=dbver,
             json_mode=False,
             modaliases=sess_modaliases,
-            config_vals=sess_config,
+            session_config=sess_config,
             stmt_mode=enums.CompileStatementMode.SINGLE,
             capability=enums.Capability.QUERY)
 
@@ -958,7 +1014,7 @@ class Compiler:
             dbver=dbver,
             json_mode=json_mode,
             modaliases=sess_modaliases,
-            config_vals=sess_config,
+            session_config=sess_config,
             stmt_mode=enums.CompileStatementMode(stmt_mode),
             capability=capability)
 

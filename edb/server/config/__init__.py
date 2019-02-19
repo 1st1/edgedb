@@ -17,50 +17,37 @@
 #
 
 
-import immutables
-
-from . import setting as cs
-from . import types as ct
-from . import spec
-
-from .config import Config
+from .ops import OpLevel, OpCode, Operation, apply, lookup
+from .ops import spec_to_json, to_json, from_json
+from .ops import value_to_json_edgeql, value_to_json
+from .spec import Spec, Setting
+from .types import ConfigType, Port
 
 
-__all__ = ('configs', 'Config')
-
-
-configs = immutables.Map(
-    __internal_no_const_folding=cs.setting(
-        type=bool,
-        default=False,
-        level=cs.ConfigLevel.SESSION),
-
-    __internal_testmode=cs.setting(
-        type=bool,
-        default=False,
-        level=cs.ConfigLevel.SESSION),
-
-    ports=cs.setting(
-        type=ct.Port,
-        default=frozenset(),
-        level=cs.ConfigLevel.SYSTEM,
-        is_set=True)
+__all__ = (
+    'settings',
+    'apply', 'lookup',
+    'Spec', 'Setting',
+    'spec_to_json', 'to_json', 'from_json',
+    'value_to_json_edgeql', 'value_to_json',
+    'OpLevel', 'OpCode', 'Operation',
+    'ConfigType', 'Port',
 )
 
 
-settings = spec.Spec(
-    spec.Setting(
+settings = Spec(
+    Setting(
         '__internal_no_const_folding',
         type=bool, default=False,
         internal=True),
 
-    spec.Setting(
+    Setting(
         '__internal_testmode',
         type=bool, default=False,
         internal=True),
 
-    spec.Setting(
+    Setting(
         'ports',
-        type=ct.Port, set_of=True, default=frozenset(),
+        type=Port, set_of=True, default=frozenset(),
         system=True),
 )

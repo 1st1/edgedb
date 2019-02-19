@@ -65,6 +65,7 @@ cdef bytes INIT_CON_SCRIPT = (b'''
     CREATE TEMPORARY TABLE _edgecon_state (
         name text NOT NULL,
         value text NOT NULL,
+        edgeql_value text,
         type text NOT NULL CHECK(type = 'C' OR type = 'A'),
         UNIQUE(name, type)
     );
@@ -75,10 +76,10 @@ cdef bytes INIT_CON_SCRIPT = (b'''
         UNIQUE(_sentinel)
     );
 
-    INSERT INTO _edgecon_state(name, value, type)
+    INSERT INTO _edgecon_state(name, value, edgeql_value, type)
     VALUES ('', \'''' +
        defines.DEFAULT_MODULE_ALIAS.replace("'", "''").encode() +
-    b'''\', 'A');
+    b'''\', NULL, 'A');
     '''
 )
 
@@ -338,7 +339,7 @@ cdef class EdgeConnection:
             self.dbview.on_error(compiled)
             if not self.backend.pgcon.in_tx() and self.dbview.in_tx():
                 # COMMIT command can fail, in which case the
-                # transaction is finished.  This check workarounds
+                # transaction is aborted.  This check workarounds
                 # that (until a better solution is found.)
                 self.dbview.abort_tx()
                 await self.recover_current_tx_info()
@@ -427,7 +428,7 @@ cdef class EdgeConnection:
                 self.dbview.on_error(unit)
                 if not self.backend.pgcon.in_tx() and self.dbview.in_tx():
                     # COMMIT command can fail, in which case the
-                    # transaction is finished.  This check workarounds
+                    # transaction is aborted.  This check workarounds
                     # that (until a better solution is found.)
                     self.dbview.abort_tx()
                     await self.recover_current_tx_info()
