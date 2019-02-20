@@ -19,7 +19,8 @@
 
 from .ops import OpLevel, OpCode, Operation, apply, lookup
 from .ops import spec_to_json, to_json, from_json
-from .ops import value_to_json_edgeql, value_to_json
+from .ops import value_to_json_edgeql, value_to_json_edgeql_value
+from .ops import value_to_json
 from .spec import Spec, Setting
 from .types import ConfigType, Port
 
@@ -29,13 +30,22 @@ __all__ = (
     'apply', 'lookup',
     'Spec', 'Setting',
     'spec_to_json', 'to_json', 'from_json',
-    'value_to_json_edgeql', 'value_to_json',
+    'value_to_json_edgeql', 'value_to_json_edgeql_value', 'value_to_json',
     'OpLevel', 'OpCode', 'Operation',
     'ConfigType', 'Port',
 )
 
 
 settings = Spec(
+    # === User-configurable settings: ===
+
+    Setting(
+        'ports',
+        type=Port, set_of=True, default=frozenset(),
+        system=True),
+
+    # === Internal settings (not part of stable API): ===
+
     Setting(
         '__internal_no_const_folding',
         type=bool, default=False,
@@ -47,7 +57,7 @@ settings = Spec(
         internal=True),
 
     Setting(
-        'ports',
-        type=Port, set_of=True, default=frozenset(),
-        system=True),
+        '__internal_testvalue',
+        type=int, default=0,
+        internal=True),
 )

@@ -142,7 +142,7 @@ def value_to_json(setting: spec.Setting, value: object):
 
 
 def value_to_json_edgeql_value(setting: spec.Setting, value: object):
-    def from_python(v):
+    def py_to_edgeql(v):
         if isinstance(v, bool):
             return repr(v).lower()
         return repr(v)
@@ -151,12 +151,12 @@ def value_to_json_edgeql_value(setting: spec.Setting, value: object):
         if issubclass(setting.type, types.ConfigType):
             return '{' + ','.join(v.to_edgeql() for v in value) + '}'
         else:
-            return '{' + ','.join(from_python(v) for v in value) + '}'
+            return '{' + ','.join(py_to_edgeql(v) for v in value) + '}'
     else:
         if issubclass(setting.type, types.ConfigType):
             return value.to_edgeql()
         else:
-            return from_python(value)
+            return py_to_edgeql(value)
 
 
 def value_to_json_edgeql(setting: spec.Setting, value: object):

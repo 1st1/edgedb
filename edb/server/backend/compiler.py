@@ -647,7 +647,7 @@ class Compiler:
                             {pg_ql(name)},
                             {pg_ql(config.value_to_json(
                                 setting, config_val))},
-                            {pg_ql(config.value_to_json_edgeql(
+                            {pg_ql(config.value_to_json_edgeql_value(
                                 setting, config_val))},
                             'C'
                         )

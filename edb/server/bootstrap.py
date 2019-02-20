@@ -294,6 +294,7 @@ async def _init_stdlib(cluster, conn):
         pickle.dump(schema, file=f, protocol=pickle.HIGHEST_PROTOCOL)
 
     await metaschema.generate_views(conn, schema)
+    await metaschema.generate_support_views(conn, schema)
 
     return schema
 
@@ -399,12 +400,16 @@ async def _ensure_edgedb_database(conn, database, owner, *, cluster):
 
 async def _ensure_configs(cluster):
     data_dir = cluster.get_data_dir()
+    spec_fn = os.path.join(data_dir, 'config_spec.json')
+    sys_fn = os.path.join(data_dir, 'config_sys.json')
 
-    with open(os.path.join(data_dir, 'config_spec.json'), 'wt') as f:
-        f.write(config.spec_to_json(config.settings))
+    if not os.path.exists(spec_fn):
+        with open(spec_fn, 'wt') as f:
+            f.write(config.spec_to_json(config.settings))
 
-    with open(os.path.join(data_dir, 'config_sys.json'), 'wt') as f:
-        f.write('{}')
+    if not os.path.exists(sys_fn):
+        with open(sys_fn, 'wt') as f:
+            f.write('{}')
 
 
 def _pg_log_listener(conn, msg):
