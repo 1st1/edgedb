@@ -1,0 +1,7 @@
+START TRANSACTION;
+INSERT DefaultTest8 { number := 1 };
+SELECT DefaultTest8.number;
+SELECT DefaultTest8;
+SELECT DefaultTest8.number;
+ROLLBACK;
+
