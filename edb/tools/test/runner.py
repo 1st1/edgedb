@@ -766,6 +766,9 @@ class ParallelTextTestRunner:
                 self._echo('Shutting down test cluster... ', nl=False)
                 if cluster is not None:
                     cluster.stop()
+                    if (cluster._daemon_process and
+                            cluster._daemon_process.returncode is None):
+                        cluster._daemon_process.wait(60)
                     cluster.destroy()
                 self._echo('OK.')
 

@@ -18,7 +18,10 @@
 
 
 from __future__ import annotations
+from typing import *  # NoQA
 
+import asyncio
+import json
 import logging
 import os
 import urllib.parse
@@ -36,6 +39,7 @@ from edb.server import http_graphql_port
 from edb.server import mng_port
 from edb.server import pgcon
 
+from . import baseport
 from . import dbview
 
 
@@ -44,10 +48,16 @@ logger = logging.getLogger('edb.server')
 
 class Server:
 
+    _ports: List[baseport.Port]
+    _sys_conf_ports: Mapping[config.ConfigType, baseport.Port]
+
     def __init__(self, *, loop, cluster, runstate_dir,
+                 data_dir,
                  internal_runstate_dir,
                  max_backend_connections,
-                 nethost, netport):
+                 nethost, netport,
+                 auto_shutdown: bool=False,
+                 echo_runtime_info: bool = False):
 
         self._loop = loop
 
@@ -60,6 +70,7 @@ class Server:
         # DB state will be initialized in init().
         self._dbindex = None
 
+        self._data_dir = data_dir
         self._runstate_dir = runstate_dir
         self._internal_runstate_dir = internal_runstate_dir
         self._max_backend_connections = max_backend_connections
@@ -71,6 +82,12 @@ class Server:
         self._ports = []
         self._sys_conf_ports = {}
         self._sys_auth = tuple()
+
+        # Shutdown the server after the last management
+        # connection has disconnected
+        self._auto_shutdown = auto_shutdown
+
+        self._echo_runtime_info = echo_runtime_info
 
     async def init(self):
         self._dbindex = await dbview.DatabaseIndex.init(self)
@@ -88,6 +105,7 @@ class Server:
             mng_port.ManagementPort,
             nethost=self._mgmt_host_addr,
             netport=self._mgmt_port_no,
+            auto_shutdown=self._auto_shutdown,
         )
 
     def _populate_sys_auth(self):
@@ -289,6 +307,14 @@ class Server:
                 await self._start_portconf(portconf, suppress_errors=True)
 
         self._serving = True
+
+        if self._echo_runtime_info:
+            ri = {
+                "port": self._mgmt_port_no,
+                "data_dir": str(self._data_dir),
+                "runstate_dir": str(self._runstate_dir),
+            }
+            print(f'\nEDGEDB_SERVER_DATA:{json.dumps(ri)}\n', flush=True)
 
     async def stop(self):
         self._serving = False
