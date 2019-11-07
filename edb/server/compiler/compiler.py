@@ -76,7 +76,6 @@ from . import status
 class CompilerDatabaseState:
 
     dbver: int
-    con_args: dict
     schema: s_schema.Schema
 
 
@@ -198,11 +197,26 @@ class BaseCompiler:
             h.update(val)
         return h.hexdigest().encode('latin1')
 
-    def _wrap_schema(self, dbver, con_args, schema) -> CompilerDatabaseState:
+    def _wrap_schema(self, dbver, schema) -> CompilerDatabaseState:
         return CompilerDatabaseState(
             dbver=dbver,
-            con_args=con_args,
             schema=schema)
+
+    async def new_connection(self):
+        con_args = self._connect_args.copy()
+        con_args['user'] = defines.EDGEDB_SUPERUSER
+        con_args['database'] = self._dbname
+        return await asyncpg.connect(**con_args)
+
+    async def introspect(
+            self, connection: asyncpg.Connection) -> s_schema.Schema:
+
+        im = intromech.IntrospectionMech(connection)
+        schema = await im.readschema(
+            schema=self._std_schema,
+            exclude_modules=s_schema.STD_MODULES)
+
+        return schema
 
     async def _get_database(self, dbver: int) -> CompilerDatabaseState:
         if self._cached_db is not None and self._cached_db.dbver == dbver:
@@ -210,25 +224,17 @@ class BaseCompiler:
 
         self._cached_db = None
 
-        con_args = self._connect_args.copy()
-        con_args['user'] = defines.EDGEDB_SUPERUSER
-        con_args['database'] = self._dbname
-
-        con = await asyncpg.connect(**con_args)
-        if self._std_schema is None:
-            self._std_schema = await load_std_schema(con)
-
-        if self._config_spec is None:
-            self._config_spec = config.load_spec_from_schema(self._std_schema)
-            config.set_settings(self._config_spec)
-
+        con = await self.new_connection()
         try:
-            im = intromech.IntrospectionMech(con)
-            schema = await im.readschema(
-                schema=self._std_schema,
-                exclude_modules=s_schema.STD_MODULES)
+            if self._std_schema is None:
+                self._std_schema = await load_std_schema(con)
 
-            db = self._wrap_schema(dbver, con_args, schema)
+            if self._config_spec is None:
+                self._config_spec = config.load_spec_from_schema(self._std_schema)
+                config.set_settings(self._config_spec)
+            
+            schema = await self.introspect(con)
+            db = self._wrap_schema(dbver, schema)
             self._cached_db = db
             return db
         finally:
@@ -1191,12 +1197,19 @@ class Compiler(BaseCompiler):
         state.current_tx().update_schema(schema)
 
     async def describe_database_dump(
-        self,
-        txid,
-    ) -> List[DumpBlockDescriptor]:
-        state = self._load_state(txid)
-        tx = state.current_tx()
-        schema = tx.get_schema()
+            self, tx_shanpshot_id) -> List[DumpBlockDescriptor]:
+
+        con = await self.new_connection()
+        try:
+            async with con.transaction(isolation='serializable',
+                                       readonly=True):
+                await con.execute(
+                    f'SET TRANSACTION SNAPSHOT {pg_ql(tx_shanpshot_id)};')
+
+                schema = await self.introspect(con)
+        finally:
+            await con.close()
+
         objtypes = schema.get_objects(
             type=s_objtypes.ObjectType,
             excluded_modules=s_schema.STD_MODULES,
@@ -1204,6 +1217,8 @@ class Compiler(BaseCompiler):
         descriptors = []
 
         for objtype in objtypes:
+            if objtype.is_union_type(schema) or objtype.is_view(schema):
+                continue
             descriptors.extend(self._describe_object(schema, objtype))
 
         return descriptors

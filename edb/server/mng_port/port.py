@@ -78,10 +78,8 @@ class ManagementPort(baseport.Port):
         return 'compiler-mng'
 
     async def new_backend(self, *, dbname: str, dbver: int):
-        server = self.get_server()
-
         async with taskgroup.TaskGroup() as g:
-            new_pgcon_task = g.create_task(server.new_pgcon(dbname))
+            new_pgcon_task = g.create_task(self.new_pgcon(dbname))
             compiler_task = g.create_task(self.new_compiler(dbname, dbver))
 
         backend = Backend(
@@ -94,6 +92,10 @@ class ManagementPort(baseport.Port):
     def new_edgecon_id(self):
         self._edgecon_id += 1
         return str(self._edgecon_id)
+
+    async def new_pgcon(self, dbname):
+        server = self.get_server()
+        return await server.new_pgcon(dbname)
 
     async def start(self):
         await super().start()

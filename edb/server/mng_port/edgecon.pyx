@@ -974,21 +974,6 @@ cdef class EdgeConnection:
                     self.dbview.txid,
                     typemap)
 
-    async def dump(self):
-        if not self.dbview.txid:
-            raise errors.ProtocolError(
-                'the DUMP message must be executed while in transaction'
-            )
-
-        descriptors = await self.backend.compiler.call(
-            'describe_database_dump',
-            self.dbview.txid,
-        )
-
-        raise errors.UnsupportedFeatureError(
-            'dump is not fully functional yet'
-        )
-
     async def execute(self):
         cdef:
             WriteBuffer bound_args_buf
@@ -1447,3 +1432,52 @@ cdef class EdgeConnection:
 
     def eof_received(self):
         pass
+
+    async def dump(self):
+        if self.dbview.txid:
+            raise errors.ProtocolError(
+                'DUMP must not be executed while in transaction'
+            )
+
+        dbname = self.dbview.dbname
+        pgcon = await self.port.new_pgcon(dbname)
+
+        try:
+            # To avoid having races, we want to:
+            #
+            #   1. start a transaction;
+            #
+            #   2. in the compiler process we connect to that transaction
+            #      and re-introspect the schema in it.
+            #
+            #   3. all dump worker pg connection would work on the same
+            #      connection.
+            #
+            # This guarantees that every connection and the compiler work
+            # with the same DB state.
+
+            await pgcon.simple_query(
+                b'''START TRANSACTION
+                        ISOLATION LEVEL SERIALIZABLE
+                        READ ONLY
+                        DEFERRABLE
+                ''',
+                True
+            )
+
+            tx_snapshot_id = await pgcon.simple_query(
+                b'SELECT pg_export_snapshot();', False)
+            tx_snapshot_id = tx_snapshot_id[0][0].decode()
+
+            blocks = await self.backend.compiler.call(
+                'describe_database_dump',
+                tx_snapshot_id,
+            )
+
+
+
+            raise errors.UnsupportedFeatureError(
+                'dump is not fully functional yet'
+            )
+        finally:
+            pgcon.terminate()
