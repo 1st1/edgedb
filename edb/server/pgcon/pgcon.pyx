@@ -476,7 +476,7 @@ cdef class PGProto:
                         if buf is None:
                             buf = WriteBuffer.new()
 
-                        self.buffer.redirect_messages(buf, b'D')
+                        self.buffer.redirect_messages(buf, b'D', 0)
                         if buf.len() >= DATA_BUFFER_SIZE:
                             edgecon.write(buf)
                             buf = None
@@ -603,6 +603,90 @@ cdef class PGProto:
         if exc:
             raise pgerror.BackendError(fields=exc)
         return result
+
+    async def _dump(self, block, output_queue, fragment_suggested_size):
+        cdef:
+            WriteBuffer buf
+            WriteBuffer qbuf
+            WriteBuffer out
+
+        buf = WriteBuffer.new()
+
+        qbuf = WriteBuffer.new_message(b'Q')
+        qbuf.write_bytestring(block.sql_copy_stmt)
+        qbuf.end_message()
+
+        buf.write_buffer(qbuf)
+        buf.write_bytes(SYNC_MESSAGE)
+
+        self.write(buf)
+        self.waiting_for_sync = True
+
+        print('RECV', block.schema_object_id)
+
+        er = None
+        out = None
+        i = 0
+        while True:
+            if not self.buffer.take_message():
+                await self.wait_for_message()
+            mtype = self.buffer.get_message_type()
+
+            if mtype == b'H':
+                # CopyOutResponse
+                self.buffer.discard_message()
+
+            elif mtype == b'd':
+                # CopyData
+                if out is None:
+                    out = WriteBuffer.new()
+
+                self.buffer.redirect_messages(
+                    out, b'd', fragment_suggested_size)
+
+                if out._length >= fragment_suggested_size:
+                    print(self, "PUT TO THE QUEUE")
+                    await output_queue.put((block, i, out))
+                    i += 1
+                    out = None
+
+            elif mtype == b'c':
+                # CopyDone
+                print(self, "COPYDONE", out)
+                self.buffer.discard_message()
+
+            elif mtype == b'C':
+                # CommandComplete
+                if out is not None:
+                    print(self, "PUT TO THE QUEUE")
+                    await output_queue.put((block, i, out))
+                self.buffer.discard_message()
+
+            elif mtype == b'E':
+                print('EeeeeeeeeeeE')
+                er = self.parse_error_message()
+
+            elif mtype == b'Z':
+                self.parse_sync_message()
+                break
+
+            else:
+                self.fallthrough()
+
+        if er:
+            raise pgerror.BackendError(fields=er)
+
+        print('DONE', block.schema_object_id)
+
+    async def dump(self, input_queue, output_queue, fragment_suggested_size):
+        while True:
+            try:
+                block = input_queue.pop()
+            except IndexError:
+                await output_queue.put(None)
+                return
+
+            await self._dump(block, output_queue, fragment_suggested_size)
 
     async def connect(self):
         cdef:

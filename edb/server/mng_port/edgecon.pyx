@@ -17,6 +17,7 @@
 #
 
 import asyncio
+import collections
 import hashlib
 import json
 import logging
@@ -56,7 +57,7 @@ from edb.schema import objects as s_obj
 
 from edb import errors
 from edb.errors import base as base_errors
-from edb.common import debug
+from edb.common import debug, taskgroup
 
 from edgedb import scram
 
@@ -72,6 +73,9 @@ cdef object CARD_ONE = compiler.ResultCardinality.ONE
 cdef object CARD_MANY = compiler.ResultCardinality.MANY
 
 cdef object logger = logging.getLogger('edb.server')
+
+
+DEF BACKUP_NWORKERS = 4
 
 
 @cython.final
@@ -1418,12 +1422,6 @@ cdef class EdgeConnection:
 
         self.abort()
 
-    def pause_writing(self):
-        pass
-
-    def resume_writing(self):
-        pass
-
     def data_received(self, data):
         self.buffer.feed_data(data)
         if self._msg_take_waiter is not None and self.buffer.take_message():
@@ -1433,6 +1431,20 @@ cdef class EdgeConnection:
     def eof_received(self):
         pass
 
+    async def _init_dump_pgcon(self, pgcon, tx_snapshot_id):
+        await pgcon.simple_query(
+            b'''START TRANSACTION
+                    ISOLATION LEVEL SERIALIZABLE
+                    READ ONLY;
+            ''',
+            True
+        )
+
+        await pgcon.simple_query(
+            f"SET TRANSACTION SNAPSHOT '{tx_snapshot_id}';".encode(),
+            True
+        )
+
     async def dump(self):
         if self.dbview.txid:
             raise errors.ProtocolError(
@@ -1441,6 +1453,7 @@ cdef class EdgeConnection:
 
         dbname = self.dbview.dbname
         pgcon = await self.port.new_pgcon(dbname)
+        pgcons = [pgcon]
 
         try:
             # To avoid having races, we want to:
@@ -1453,14 +1466,14 @@ cdef class EdgeConnection:
             #   3. all dump worker pg connection would work on the same
             #      connection.
             #
-            # This guarantees that every connection and the compiler work
+            # This guarantees that every pg connection and the compiler work
             # with the same DB state.
 
             await pgcon.simple_query(
                 b'''START TRANSACTION
                         ISOLATION LEVEL SERIALIZABLE
                         READ ONLY
-                        DEFERRABLE
+                        DEFERRABLE;
                 ''',
                 True
             )
@@ -1474,10 +1487,51 @@ cdef class EdgeConnection:
                 tx_snapshot_id,
             )
 
+            if BACKUP_NWORKERS - 1 > 0:
+                pgcon_tasks = []
 
+                async with taskgroup.TaskGroup() as g:
+                    for _ in range(BACKUP_NWORKERS - 1):
+                        task = g.create_task(self.port.new_pgcon(dbname))
+                        pgcon_tasks.append(task)
+
+                for task in pgcon_tasks:
+                    pgcon = task.result()
+                    pgcons.append(pgcon)
+
+                async with taskgroup.TaskGroup() as g:
+                    for pgcon in pgcons[1:]:
+                        g.create_task(
+                            self._init_dump_pgcon(pgcon, tx_snapshot_id))
+
+            blocks_queue = collections.deque(blocks)
+            output_queue = asyncio.Queue()#maxsize=len(pgcons))
+
+            print('BLOCKS', len(blocks))
+            for b in blocks:
+                print('   + ', b.schema_object_id)
+
+            async with taskgroup.TaskGroup() as g:
+                for pgcon in pgcons:
+                    g.create_task(pgcon.dump(
+                        blocks_queue,
+                        output_queue,
+                        1024 * 1024 * 10
+                    ))
+
+            nstops = 0
+            while True:
+                out = await output_queue.get()
+                if out is None:
+                    nstops += 1
+                    if nstops == len(pgcons):
+                        break
+                else:
+                    print('!!!!!!!!!', out[0].schema_object_id, out[1], bytes(out[2]))
 
             raise errors.UnsupportedFeatureError(
-                'dump is not fully functional yet'
-            )
+                'dump is not fully functional yet')
+
         finally:
-            pgcon.terminate()
+            for pgcon in pgcons:
+                pgcon.terminate()
