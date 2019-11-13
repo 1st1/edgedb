@@ -75,7 +75,7 @@ cdef object CARD_MANY = compiler.ResultCardinality.MANY
 cdef object logger = logging.getLogger('edb.server')
 
 
-DEF BACKUP_NWORKERS = 4
+DEF BACKUP_NWORKERS = 2
 
 
 @cython.final
@@ -1506,10 +1506,6 @@ cdef class EdgeConnection:
 
             blocks_queue = collections.deque(blocks)
             output_queue = asyncio.Queue()#maxsize=len(pgcons))
-
-            print('BLOCKS', len(blocks))
-            for b in blocks:
-                print('   + ', b.schema_object_id)
 
             async with taskgroup.TaskGroup() as g:
                 for pgcon in pgcons:

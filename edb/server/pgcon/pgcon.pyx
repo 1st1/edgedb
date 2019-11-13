@@ -617,12 +617,9 @@ cdef class PGProto:
         qbuf.end_message()
 
         buf.write_buffer(qbuf)
-        buf.write_bytes(SYNC_MESSAGE)
 
         self.write(buf)
         self.waiting_for_sync = True
-
-        print('RECV', block.schema_object_id)
 
         er = None
         out = None
@@ -645,25 +642,21 @@ cdef class PGProto:
                     out, b'd', fragment_suggested_size)
 
                 if out._length >= fragment_suggested_size:
-                    print(self, "PUT TO THE QUEUE")
                     await output_queue.put((block, i, out))
                     i += 1
                     out = None
 
             elif mtype == b'c':
                 # CopyDone
-                print(self, "COPYDONE", out)
                 self.buffer.discard_message()
 
             elif mtype == b'C':
                 # CommandComplete
                 if out is not None:
-                    print(self, "PUT TO THE QUEUE")
                     await output_queue.put((block, i, out))
                 self.buffer.discard_message()
 
             elif mtype == b'E':
-                print('EeeeeeeeeeeE')
                 er = self.parse_error_message()
 
             elif mtype == b'Z':
@@ -675,8 +668,6 @@ cdef class PGProto:
 
         if er:
             raise pgerror.BackendError(fields=er)
-
-        print('DONE', block.schema_object_id)
 
     async def dump(self, input_queue, output_queue, fragment_suggested_size):
         while True:
