@@ -476,7 +476,7 @@ cdef class PGProto:
                         if buf is None:
                             buf = WriteBuffer.new()
 
-                        self.buffer.redirect_messages(buf, b'D', 0)
+                        self.buffer.redirect_messages(buf, b'D')#, 0)
                         if buf.len() >= DATA_BUFFER_SIZE:
                             edgecon.write(buf)
                             buf = None
@@ -639,7 +639,7 @@ cdef class PGProto:
                     out = WriteBuffer.new()
 
                 self.buffer.redirect_messages(
-                    out, b'd', fragment_suggested_size)
+                    out, b'd')#, fragment_suggested_size)
 
                 if out._length >= fragment_suggested_size:
                     await output_queue.put((block, i, out))

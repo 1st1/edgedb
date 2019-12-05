@@ -230,9 +230,10 @@ class BaseCompiler:
                 self._std_schema = await load_std_schema(con)
 
             if self._config_spec is None:
-                self._config_spec = config.load_spec_from_schema(self._std_schema)
+                self._config_spec = config.load_spec_from_schema(
+                    self._std_schema)
                 config.set_settings(self._config_spec)
-            
+
             schema = await self.introspect(con)
             db = self._wrap_schema(dbver, schema)
             self._cached_db = db
