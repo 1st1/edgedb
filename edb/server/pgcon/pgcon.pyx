@@ -58,6 +58,8 @@ from . import errors as pgerror
 DEF DATA_BUFFER_SIZE = 100_000
 DEF PREP_STMTS_CACHE = 100
 
+DEF COPY_SIGNATURE = b"PGCOPY\n\377\r\n\0"
+
 
 cdef object CARD_NA = compiler.ResultCardinality.NOT_APPLICABLE
 
@@ -175,6 +177,7 @@ cdef class PGProto:
 
         if self.msg_waiter and not self.msg_waiter.done():
             self.msg_waiter.set_exception(ConnectionAbortedError())
+            self.msg_waiter = None
 
     async def sync(self):
         if self.waiting_for_sync:
@@ -476,7 +479,7 @@ cdef class PGProto:
                         if buf is None:
                             buf = WriteBuffer.new()
 
-                        self.buffer.redirect_messages(buf, b'D')#, 0)
+                        self.buffer.redirect_messages(buf, b'D', 0)
                         if buf.len() >= DATA_BUFFER_SIZE:
                             edgecon.write(buf)
                             buf = None
@@ -638,8 +641,29 @@ cdef class PGProto:
                 if out is None:
                     out = WriteBuffer.new()
 
+                    if i == 0:
+                        # The first COPY IN message is prefixed with
+                        # `COPY_SIGNATURE` -- strip it.
+                        first = self.buffer.consume_message()
+                        if first[:len(COPY_SIGNATURE)] != COPY_SIGNATURE:
+                            raise RuntimeError('invalid COPY IN message')
+
+                        buf = WriteBuffer.new_message(b'd')
+                        buf.write_bytes(first[len(COPY_SIGNATURE):])
+                        buf.end_message()
+                        out.write_buffer(buf)
+
+                        if out._length >= fragment_suggested_size:
+                            await output_queue.put((block, i, out))
+                            i += 1
+                            out = None
+
+                        if (not self.buffer.take_message() or
+                                self.buffer.get_message_type() != b'd'):
+                            continue
+
                 self.buffer.redirect_messages(
-                    out, b'd')#, fragment_suggested_size)
+                    out, b'd', fragment_suggested_size)
 
                 if out._length >= fragment_suggested_size:
                     await output_queue.put((block, i, out))
@@ -883,7 +907,9 @@ cdef class PGProto:
     def data_received(self, data):
         self.buffer.feed_data(data)
 
-        if self.msg_waiter is not None and self.buffer.take_message():
+        if (self.msg_waiter is not None and
+                self.buffer.take_message() and
+                not self.msg_waiter.cancelled()):
             self.msg_waiter.set_result(True)
             self.msg_waiter = None
 

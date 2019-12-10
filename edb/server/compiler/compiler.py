@@ -18,12 +18,13 @@
 
 
 from __future__ import annotations
+from typing import *  # NoQA
 
 import collections
 import dataclasses
 import hashlib
 import pickle
-from typing import *  # NoQA
+import uuid
 
 import asyncpg
 import immutables
@@ -1211,6 +1212,8 @@ class Compiler(BaseCompiler):
         finally:
             await con.close()
 
+        schema_ddl = s_ddl.ddl_text_from_schema(schema, emit_oids=True)
+
         objtypes = schema.get_objects(
             type=s_objtypes.ObjectType,
             excluded_modules=s_schema.STD_MODULES,
@@ -1222,7 +1225,10 @@ class Compiler(BaseCompiler):
                 continue
             descriptors.extend(self._describe_object(schema, objtype))
 
-        return descriptors
+        return DumpDescriptor(
+            schema_ddl=schema_ddl,
+            blocks=descriptors,
+        )
 
     def _describe_object(
         self,
@@ -1339,6 +1345,12 @@ class Compiler(BaseCompiler):
             type_desc=type_data,
             sql_copy_stmt=stmt,
         )] + ptrdesc
+
+
+class DumpDescriptor(NamedTuple):
+
+    schema_ddl: str
+    blocks: Sequence[DumpBlockDescriptor]
 
 
 class DumpBlockDescriptor(NamedTuple):
