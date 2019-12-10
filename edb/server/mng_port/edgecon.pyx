@@ -1131,6 +1131,8 @@ cdef class EdgeConnection:
                     await self.wait_for_message()
                 mtype = self.buffer.get_message_type()
 
+                print(chr(mtype))
+
                 flush_sync_on_error = False
 
                 try:
@@ -1549,6 +1551,8 @@ cdef class EdgeConnection:
             self.flush()
             blocks_desc = {}
 
+            print('BEGIN')
+
             async with taskgroup.TaskGroup() as g:
                 for pgcon in pgcons:
                     g.create_task(pgcon.dump(
@@ -1571,14 +1575,13 @@ cdef class EdgeConnection:
                             desc = blocks_desc[block.schema_object_id]
                         except KeyError:
                             desc = blocks_desc[block.schema_object_id] = {
-                                'hasher': hashlib.sha256(),
                                 'count': 0,
                                 'size': 0,
                             }
 
-                        desc['hasher'].update(data)  # TODO: threadpool?
                         desc['count'] += 1
-                        desc['size'] += len(data)
+                        assert isinstance(data, WriteBuffer)
+                        desc['size'] += (<WriteBuffer>data).len()
 
                         msg_buf = WriteBuffer.new_message(b'=')
                         msg_buf.write_int16(0)  # no headers
@@ -1586,12 +1589,17 @@ cdef class EdgeConnection:
                             block.schema_object_id.bytes)  # uuid
                         msg_buf.write_int64(block_num)
                         # TODO: Add compression
-                        msg_buf.write_bytestring(data)
+                        msg_buf.write_buffer(data)
                         msg_buf.end_message()
+                        print('send data')
 
                         self._transport.write(msg_buf)
                         if self._write_waiter:
-                            await self._write_waiter
+                            print('pause')
+                            try:
+                                await self._write_waiter
+                            finally:
+                                print('resume')
 
             msg_buf = WriteBuffer.new_message(b'@')
             msg_buf.write_int16(0)  # no headers
@@ -1611,8 +1619,8 @@ cdef class EdgeConnection:
                 desc = blocks_desc[block.schema_object_id]
                 msg_buf.write_int64(desc['count'])
                 msg_buf.write_int64(desc['size'])
-                msg_buf.write_bytestring('sha256')
-                msg_buf.write_bytestring(desc['hasher'].digest())
+
+            print('sent final')
 
             msg_buf.end_message()
             self._transport.write(msg_buf)
