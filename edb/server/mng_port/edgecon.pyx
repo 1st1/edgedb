@@ -1526,8 +1526,6 @@ cdef class EdgeConnection:
                 tx_snapshot_id,
             )
 
-            print(schema_ddl, blocks)
-
             if BACKUP_NWORKERS - 1 > 0:
                 pgcon_tasks = []
 
@@ -1549,6 +1547,7 @@ cdef class EdgeConnection:
             output_queue = asyncio.Queue(maxsize=len(pgcons) * 2)
 
             self.flush()
+            blocks_desc = {}
 
             async with taskgroup.TaskGroup() as g:
                 for pgcon in pgcons:
@@ -1568,9 +1567,23 @@ cdef class EdgeConnection:
                     else:
                         block, block_num, data = out
 
+                        try:
+                            desc = blocks_desc[block.schema_object_id]
+                        except KeyError:
+                            desc = blocks_desc[block.schema_object_id] = {
+                                'hasher': hashlib.sha256(),
+                                'count': 0,
+                                'size': 0,
+                            }
+
+                        desc['hasher'].update(data)  # TODO: threadpool?
+                        desc['count'] += 1
+                        desc['size'] += len(data)
+
                         msg_buf = WriteBuffer.new_message(b'=')
                         msg_buf.write_int16(0)  # no headers
-                        msg_buf.write_bytes(block.schema_object_id.bytes)
+                        msg_buf.write_bytes(
+                            block.schema_object_id.bytes)  # uuid
                         msg_buf.write_int64(block_num)
                         # TODO: Add compression
                         msg_buf.write_bytestring(data)
@@ -1580,8 +1593,29 @@ cdef class EdgeConnection:
                         if self._write_waiter:
                             await self._write_waiter
 
-            raise errors.UnsupportedFeatureError(
-                'dump is not fully functional yet')
+            msg_buf = WriteBuffer.new_message(b'@')
+            msg_buf.write_int16(0)  # no headers
+            msg_buf.write_len_prefixed_bytes(schema_ddl.encode())
+
+            msg_buf.write_int32(len(blocks))
+            for block in blocks:
+                msg_buf.write_int16(0)  # no headers
+                msg_buf.write_bytes(block.schema_object_id.bytes)  # uuid
+
+                msg_buf.write_int16(len(block.schema_deps))
+                for depid in block.schema_deps:
+                    msg_buf.write_bytes(depid.bytes)  # uuid
+
+                msg_buf.write_bytestring(block.type_desc)
+
+                desc = blocks_desc[block.schema_object_id]
+                msg_buf.write_int64(desc['count'])
+                msg_buf.write_int64(desc['size'])
+                msg_buf.write_bytestring('sha256')
+                msg_buf.write_bytestring(desc['hasher'].digest())
+
+            msg_buf.end_message()
+            self._transport.write(msg_buf)
 
         finally:
             for pgcon in pgcons:
