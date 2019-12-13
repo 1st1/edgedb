@@ -21,6 +21,7 @@ import collections
 import hashlib
 import json
 import logging
+import time
 import traceback
 
 cimport cython
@@ -49,6 +50,7 @@ from edb.server.dbview cimport dbview
 from edb.server import config
 
 from edb.server import compiler
+from edb.server import buildmeta
 from edb.server.compiler import errormech
 from edb.server.pgcon cimport pgcon
 from edb.server.pgcon import errors as pgerror
@@ -1131,8 +1133,6 @@ cdef class EdgeConnection:
                     await self.wait_for_message()
                 mtype = self.buffer.get_message_type()
 
-                print(chr(mtype))
-
                 flush_sync_on_error = False
 
                 try:
@@ -1487,6 +1487,9 @@ cdef class EdgeConnection:
         cdef:
             WriteBuffer msg_buf
 
+        self.reject_headers()
+        self.buffer.finish_message()
+
         if self.dbview.txid:
             raise errors.ProtocolError(
                 'DUMP must not be executed while in transaction'
@@ -1551,8 +1554,6 @@ cdef class EdgeConnection:
             self.flush()
             blocks_desc = {}
 
-            print('BEGIN')
-
             async with taskgroup.TaskGroup() as g:
                 for pgcon in pgcons:
                     g.create_task(pgcon.dump(
@@ -1591,19 +1592,21 @@ cdef class EdgeConnection:
                         # TODO: Add compression
                         msg_buf.write_buffer(data)
                         msg_buf.end_message()
-                        print('send data')
 
                         self._transport.write(msg_buf)
                         if self._write_waiter:
-                            print('pause')
-                            try:
-                                await self._write_waiter
-                            finally:
-                                print('resume')
+                            await self._write_waiter
 
             msg_buf = WriteBuffer.new_message(b'@')
             msg_buf.write_int16(0)  # no headers
-            msg_buf.write_len_prefixed_bytes(schema_ddl.encode())
+            msg_buf.write_len_prefixed_bytes(
+                str(buildmeta.get_version()).encode())
+            # We don't care about the timestamp resolution in
+            # this context
+            msg_buf.write_int64(int(time.time()))
+
+            schema_ddl = schema_ddl.encode()
+            msg_buf.write_len_prefixed_bytes(schema_ddl)
 
             msg_buf.write_int32(len(blocks))
             for block in blocks:
@@ -1614,13 +1617,11 @@ cdef class EdgeConnection:
                 for depid in block.schema_deps:
                     msg_buf.write_bytes(depid.bytes)  # uuid
 
-                msg_buf.write_bytestring(block.type_desc)
+                msg_buf.write_len_prefixed_bytes(block.type_desc)
 
                 desc = blocks_desc[block.schema_object_id]
                 msg_buf.write_int64(desc['count'])
                 msg_buf.write_int64(desc['size'])
-
-            print('sent final')
 
             msg_buf.end_message()
             self._transport.write(msg_buf)
