@@ -1671,6 +1671,7 @@ cdef class EdgeConnection:
             await pgcon.simple_query(
                 b'''START TRANSACTION
                         ISOLATION LEVEL SERIALIZABLE;
+                    SET CONSTRAINTS ALL DEFERRED;
                 ''',
                 True
             )
@@ -1706,13 +1707,55 @@ cdef class EdgeConnection:
                 blocks,
             )
 
-            print(restore_blocks)
+            restore_blocks = {
+                b.schema_object_id: b.sql_copy_stmt
+                for b in restore_blocks.blocks
+            }
 
-            print('DONE')
+            # Send "RestoreReadyMessage"
+            self.write(WriteBuffer.new_message(b'+').end_message())
+            self.flush()
+
+            while True:
+                if not self.buffer.take_message():
+                    await self.wait_for_message()
+                mtype = self.buffer.get_message_type()
+
+                if mtype == b'=':
+                    self.reject_headers()
+                    data_schema_id = self.buffer.read_uuid()
+                    data_data = self.buffer.consume_message()
+
+                    print('RECVF', data_schema_id, len(data_data),
+                        restore_blocks[data_schema_id])
+
+                    await pgcon._copy_in(
+                        restore_blocks[data_schema_id], data_data
+                    )
+
+                    print("AFTER")
+
+                elif mtype == b'.':
+                    self.buffer.finish_message()
+                    break
+
+                else:
+                    self.fallthrough(False)
+
+            for pgcon in pgcons:
+                await pgcon.simple_query(
+                    b'''COMMIT''',
+                    False
+                )
 
         finally:
             for pgcon in pgcons:
                 pgcon.terminate()
 
+        msg = WriteBuffer.new_message(b'C')
+        msg.write_int16(0)  # no headers
+        msg.write_len_prefixed_bytes(b'RESTORE')
+        self.write(msg.end_message())
+        self.flush()
 
-        1/0
+        print('DONE')

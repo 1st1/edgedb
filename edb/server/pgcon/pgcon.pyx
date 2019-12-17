@@ -613,15 +613,11 @@ cdef class PGProto:
             WriteBuffer qbuf
             WriteBuffer out
 
-        buf = WriteBuffer.new()
-
         qbuf = WriteBuffer.new_message(b'Q')
         qbuf.write_bytestring(block.sql_copy_stmt)
         qbuf.end_message()
 
-        buf.write_buffer(qbuf)
-
-        self.write(buf)
+        self.write(qbuf)
         self.waiting_for_sync = True
 
         er = None
@@ -702,6 +698,89 @@ cdef class PGProto:
                 return
 
             await self._dump(block, output_queue, fragment_suggested_size)
+
+    async def _copy_in(self, sql, bytes data):
+        cdef:
+            WriteBuffer buf
+            WriteBuffer qbuf
+            WriteBuffer out
+
+            char* cbuf
+            ssize_t clen
+
+
+        qbuf = WriteBuffer.new_message(b'Q')
+        qbuf.write_bytestring(sql)
+        qbuf.end_message()
+
+        self.write(qbuf)
+        self.waiting_for_sync = True
+
+        er = None
+        while True:
+            if not self.buffer.take_message():
+                await self.wait_for_message()
+            mtype = self.buffer.get_message_type()
+
+            if mtype == b'G':
+                # CopyInResponse
+                self.buffer.discard_message()
+                break
+
+            elif mtype == b'E':
+                er = self.parse_error_message()
+
+            elif mtype == b'Z':
+                self.parse_sync_message()
+                break
+
+            else:
+                self.fallthrough()
+
+        if er:
+            raise pgerror.BackendError(fields=er)
+
+        print('aasa', sql)
+
+        qbuf = WriteBuffer.new_message(b'd')
+
+        cpython.PyBytes_AsStringAndSize(data, &cbuf, &clen)
+        if cbuf[0] != b'd':
+            raise RuntimeError('unexpected dump data message structure')
+        ln = hton.unpack_int32(cbuf + 1)
+
+        buf = WriteBuffer.new()
+        buf.write_byte(b'd')
+        buf.write_int32(ln + len(COPY_SIGNATURE))
+        buf.write_bytes(COPY_SIGNATURE)
+        buf.write_cstr(cbuf + 5, clen - 5)
+        self.write(buf)
+
+        qbuf = WriteBuffer.new_message(b'c')
+        qbuf.write_bytes(data)
+        qbuf.end_message()
+        self.write(qbuf)
+
+        while True:
+            if not self.buffer.take_message():
+                await self.wait_for_message()
+            mtype = self.buffer.get_message_type()
+
+            if mtype == b'C':
+                # CommandComplete
+                self.buffer.discard_message()
+
+            elif mtype == b'E':
+                er = self.parse_error_message()
+
+            elif mtype == b'Z':
+                self.parse_sync_message()
+                break
+
+        if er:
+            raise pgerror.BackendError(fields=er)
+
+        print("Dddddone")
 
     async def connect(self):
         cdef:
