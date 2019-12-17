@@ -1399,6 +1399,7 @@ class Compiler(BaseCompiler):
         schema = ctx.state.current_tx().get_schema()
 
         restore_blocks = []
+        tables = []
         for schema_object_id, typedesc in blocks:
             schema_object_id = uuidgen.from_bytes(schema_object_id)
             obj = schema._id_to_type.get(schema_object_id)
@@ -1470,8 +1471,11 @@ class Compiler(BaseCompiler):
                 )
             )
 
+            tables.append(table_name)
+
         return RestoreDescriptor(
             blocks=restore_blocks,
+            tables=tables,
         )
 
 
@@ -1494,6 +1498,7 @@ class DumpBlockDescriptor(NamedTuple):
 class RestoreDescriptor(NamedTuple):
 
     blocks: Sequence[RestoreBlockDescriptor]
+    tables: Sequence[str]
 
 
 class RestoreBlockDescriptor(NamedTuple):

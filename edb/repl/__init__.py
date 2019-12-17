@@ -253,6 +253,14 @@ class Cli:
                     callback=self._command_psql,
                     devonly=True,
                 ),
+
+                cmd.Command(
+                    trigger='pgaddr',
+                    desc='show the network addr of the postgres server',
+                    group='Development',
+                    callback=self._command_pgaddr,
+                    devonly=True,
+                ),
             ]
         )
 
@@ -828,7 +836,20 @@ class Cli:
             lambda: _psql(cmd) == 0)
 
         self.prompt.app.current_buffer.reset()
+        # Fix 'psql' command stdout artefacts:
         print('\r                ')
+
+    def _command_pgaddr(
+        self,
+        *,
+        flags: AbstractSet[str],
+        arg: Optional[str]
+    ) -> None:
+        pgaddr = self.get_server_pgaddr()
+        if not pgaddr:
+            print('\\psqlport requires EdgeDB to run in DEV mode')
+            return
+        print(pgaddr)
 
     def _command_errverbose(
         self,

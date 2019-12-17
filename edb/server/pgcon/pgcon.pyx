@@ -759,6 +759,7 @@ cdef class PGProto:
         qbuf.end_message()
         self.write(qbuf)
 
+        print('PGCON before', self)
         while True:
             if not self.buffer.take_message():
                 await self.wait_for_message()
@@ -777,6 +778,15 @@ cdef class PGProto:
 
         if er:
             raise pgerror.BackendError(fields=er)
+
+        print('PGCON sent', self)
+
+    async def restore(self, input_queue):
+        while True:
+            block = await input_queue.get()
+            if block is None:
+                return
+            await self._copy_in(*block)
 
     async def connect(self):
         cdef:

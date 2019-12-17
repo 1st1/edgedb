@@ -77,7 +77,7 @@ cdef object CARD_MANY = compiler.ResultCardinality.MANY
 cdef object logger = logging.getLogger('edb.server')
 
 
-DEF BACKUP_NWORKERS = 4
+DEF BACKUP_NWORKERS = 10
 
 
 @cython.final
@@ -1482,12 +1482,13 @@ cdef class EdgeConnection:
             return
         self._write_waiter.set_result(True)
 
-    async def _init_dump_pgcon(self, pgcon, tx_snapshot_id):
+    async def _init_dump_pgcon(self, pgcon, tx_snapshot_id, bint ro):
+        query = b'START TRANSACTION ISOLATION LEVEL SERIALIZABLE'
+        if ro:
+            query += b' READ ONLY'
+
         await pgcon.simple_query(
-            b'''START TRANSACTION
-                    ISOLATION LEVEL SERIALIZABLE
-                    READ ONLY;
-            ''',
+            query,
             True
         )
 
@@ -1543,7 +1544,7 @@ cdef class EdgeConnection:
                 tx_snapshot_id,
             )
 
-            if BACKUP_NWORKERS - 1 > 0:
+            if 0 and BACKUP_NWORKERS - 1 > 0:
                 pgcon_tasks = []
 
                 async with taskgroup.TaskGroup() as g:
@@ -1558,7 +1559,7 @@ cdef class EdgeConnection:
                 async with taskgroup.TaskGroup() as g:
                     for pgcon in pgcons[1:]:
                         g.create_task(
-                            self._init_dump_pgcon(pgcon, tx_snapshot_id))
+                            self._init_dump_pgcon(pgcon, tx_snapshot_id, 1))
 
             blocks_queue = collections.deque(blocks)
             output_queue = asyncio.Queue(maxsize=len(pgcons) * 2)
@@ -1671,11 +1672,9 @@ cdef class EdgeConnection:
             await pgcon.simple_query(
                 b'''START TRANSACTION
                         ISOLATION LEVEL SERIALIZABLE;
-                    SET CONSTRAINTS ALL DEFERRED;
                 ''',
                 True
             )
-
             tx_snapshot_id = await pgcon.simple_query(
                 b'SELECT pg_export_snapshot();', False)
             tx_snapshot_id = tx_snapshot_id[0][0].decode()
@@ -1700,7 +1699,21 @@ cdef class EdgeConnection:
                         b';'.join(query_unit.sql),
                         ignore_data=True)
 
-            restore_blocks = await self.get_backend().compiler.call(
+            await pgcon.simple_query(
+                b'''COMMIT; START TRANSACTION
+                        ISOLATION LEVEL SERIALIZABLE;
+                    --SET CONSTRAINTS ALL DEFERRED;
+                    SET statement_timeout = 0;
+                    SET lock_timeout = 0;
+                    SET idle_in_transaction_session_timeout = 0;
+                ''',
+                True
+            )
+            tx_snapshot_id = await pgcon.simple_query(
+                b'SELECT pg_export_snapshot();', False)
+            tx_snapshot_id = tx_snapshot_id[0][0].decode()
+
+            restore_blocks, tables = await self.get_backend().compiler.call(
                 'prepare_database_restore_queries',
                 txid,
                 tx_snapshot_id,
@@ -1709,44 +1722,87 @@ cdef class EdgeConnection:
 
             restore_blocks = {
                 b.schema_object_id: b.sql_copy_stmt
-                for b in restore_blocks.blocks
+                for b in restore_blocks
             }
+
+            disable_trigger_q = ''
+            enable_trigger_q = ''
+            for table in tables:
+                disable_trigger_q += f'ALTER TABLE {table} DISABLE TRIGGER ALL;'
+                enable_trigger_q += f'ALTER TABLE {table} ENABLE TRIGGER ALL;'
+
+            await pgcon.simple_query(
+                disable_trigger_q.encode(),
+                True
+            )
+
+            if 0 and BACKUP_NWORKERS - 1 > 0:
+                pgcon_tasks = []
+
+                async with taskgroup.TaskGroup() as g:
+                    for _ in range(BACKUP_NWORKERS - 1):
+                        task = g.create_task(self.port.new_pgcon(dbname))
+                        pgcon_tasks.append(task)
+
+                for task in pgcon_tasks:
+                    pgcon = task.result()
+                    pgcons.append(pgcon)
+
+                async with taskgroup.TaskGroup() as g:
+                    for pgcon in pgcons[1:]:
+                        g.create_task(
+                            self._init_dump_pgcon(pgcon, tx_snapshot_id, 0))
 
             # Send "RestoreReadyMessage"
             self.write(WriteBuffer.new_message(b'+').end_message())
             self.flush()
 
-            while True:
-                if not self.buffer.take_message():
-                    await self.wait_for_message()
-                mtype = self.buffer.get_message_type()
+            async with taskgroup.TaskGroup() as g:
+                queue = asyncio.Queue(maxsize=len(pgcons) * 2)
+                for pgcon in pgcons:
+                    g.create_task(pgcon.restore(queue))
 
-                if mtype == b'=':
-                    self.reject_headers()
-                    data_schema_id = self.buffer.read_uuid()
-                    data_data = self.buffer.consume_message()
+                while True:
+                    if not self.buffer.take_message():
+                        await self.wait_for_message()
+                    mtype = self.buffer.get_message_type()
 
-                    print('RECVF', data_schema_id, len(data_data),
-                        restore_blocks[data_schema_id])
+                    if mtype == b'=':
+                        self.reject_headers()
+                        data_schema_id = self.buffer.read_uuid()
+                        data_data = self.buffer.consume_message()
 
-                    await pgcon._copy_in(
-                        restore_blocks[data_schema_id], data_data
-                    )
+                        await queue.put(
+                            (restore_blocks[data_schema_id], data_data)
+                        )
 
-                    print("AFTER")
+                    elif mtype == b'.':
+                        self.buffer.finish_message()
+                        break
 
-                elif mtype == b'.':
-                    self.buffer.finish_message()
-                    break
+                    else:
+                        self.fallthrough(False)
 
-                else:
-                    self.fallthrough(False)
+
+                print('queue full')
+
+                for _ in pgcons:
+                    await queue.put(None)
+
+            print('before commit')
+
+            await pgcon.simple_query(
+                enable_trigger_q.encode(),
+                True
+            )
 
             for pgcon in pgcons:
                 await pgcon.simple_query(
                     b'''COMMIT''',
                     False
                 )
+
+            print('after commit')
 
         finally:
             for pgcon in pgcons:
