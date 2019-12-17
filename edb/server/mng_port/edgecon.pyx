@@ -635,7 +635,7 @@ cdef class EdgeConnection:
                 else:
                     await self.get_backend().pgcon.simple_query(
                         b';'.join(query_unit.sql), ignore_data=True)
-                    if query_unit.config_ops is not None:
+                    if query_unit.config_ops:
                         await self.dbview.apply_config_ops(
                             self.get_backend().pgcon,
                             query_unit.config_ops)
@@ -926,7 +926,7 @@ cdef class EdgeConnection:
                         process_sync,       # =send_sync
                         use_prep_stmt,      # =use_prep_stmt
                     )
-                    if query_unit.config_ops is not None:
+                    if query_unit.config_ops:
                         await self.dbview.apply_config_ops(
                             self.get_backend().pgcon,
                             query_unit.config_ops)
@@ -1100,6 +1100,8 @@ cdef class EdgeConnection:
     async def main(self):
         cdef:
             char mtype
+            bint flush_sync_on_error
+            bint flush_on_error
 
         try:
             await self.auth()
@@ -1134,6 +1136,7 @@ cdef class EdgeConnection:
                 mtype = self.buffer.get_message_type()
 
                 flush_sync_on_error = False
+                flush_on_error = False
 
                 try:
                     if mtype == b'P':
@@ -1152,15 +1155,22 @@ cdef class EdgeConnection:
                         flush_sync_on_error = True
                         await self.simple_query()
 
-                    elif mtype == b'>':
-                        await self.dump()
-
                     elif mtype == b'S':
                         await self.sync()
 
                     elif mtype == b'X':
                         self.abort()
                         break
+
+                    elif mtype == b'>':
+                        await self.dump()
+
+                    elif mtype == b'<':
+                        # The restore protocol cannot send SYNC beforehand,
+                        # so if an error occurs it should receve an ERROR
+                        # message immediately.
+                        flush_on_error = True
+                        await self.restore()
 
                     else:
                         self.fallthrough(False)
@@ -1184,6 +1194,9 @@ cdef class EdgeConnection:
                     self.buffer.finish_message()
 
                     await self.write_error(ex)
+                    if flush_on_error:
+                        self.flush()
+
                     if self._backend is None:
                         # The connection was aborted while we were
                         # interpreting the error (via compiler/errmech.py).
@@ -1499,29 +1512,28 @@ cdef class EdgeConnection:
         pgcon = await self.port.new_pgcon(dbname)
         pgcons = [pgcon]
 
+        # To avoid having races, we want to:
+        #
+        #   1. start a transaction;
+        #
+        #   2. in the compiler process we connect to that transaction
+        #      and re-introspect the schema in it.
+        #
+        #   3. all dump worker pg connection would work on the same
+        #      connection.
+        #
+        # This guarantees that every pg connection and the compiler work
+        # with the same DB state.
+
+        await pgcon.simple_query(
+            b'''START TRANSACTION
+                    ISOLATION LEVEL SERIALIZABLE
+                    READ ONLY
+                    DEFERRABLE;
+            ''',
+            True
+        )
         try:
-            # To avoid having races, we want to:
-            #
-            #   1. start a transaction;
-            #
-            #   2. in the compiler process we connect to that transaction
-            #      and re-introspect the schema in it.
-            #
-            #   3. all dump worker pg connection would work on the same
-            #      connection.
-            #
-            # This guarantees that every pg connection and the compiler work
-            # with the same DB state.
-
-            await pgcon.simple_query(
-                b'''START TRANSACTION
-                        ISOLATION LEVEL SERIALIZABLE
-                        READ ONLY
-                        DEFERRABLE;
-                ''',
-                True
-            )
-
             tx_snapshot_id = await pgcon.simple_query(
                 b'SELECT pg_export_snapshot();', False)
             tx_snapshot_id = tx_snapshot_id[0][0].decode()
@@ -1629,3 +1641,78 @@ cdef class EdgeConnection:
         finally:
             for pgcon in pgcons:
                 pgcon.terminate()
+
+    async def restore(self):
+        cdef:
+            WriteBuffer msg_buf
+            char mtype
+
+        if self.dbview.txid:
+            raise errors.ProtocolError(
+                'RESTORE must not be executed while in transaction'
+            )
+
+        self.reject_headers()
+        schema_ddl = self.buffer.read_len_prefixed_bytes()
+        block_num = <uint32_t>self.buffer.read_int32()
+        blocks = []
+        for _ in range(block_num):
+            blocks.append((
+                self.buffer.read_bytes(16),
+                self.buffer.read_len_prefixed_bytes(),
+            ))
+
+        self.buffer.finish_message()
+        dbname = self.dbview.dbname
+        pgcon = await self.port.new_pgcon(dbname)
+        pgcons = [pgcon]
+
+        try:
+            await pgcon.simple_query(
+                b'''START TRANSACTION
+                        ISOLATION LEVEL SERIALIZABLE;
+                ''',
+                True
+            )
+
+            tx_snapshot_id = await pgcon.simple_query(
+                b'SELECT pg_export_snapshot();', False)
+            tx_snapshot_id = tx_snapshot_id[0][0].decode()
+
+            schema_sql_units, txid = await self.get_backend().compiler.call(
+                'start_database_restore',
+                tx_snapshot_id,
+                schema_ddl,
+            )
+
+            for query_unit in schema_sql_units:
+                if query_unit.system_config:
+                    raise RuntimeError(
+                        'system config commands are not supported '
+                        'during restore')
+                elif query_unit.config_ops:
+                    raise RuntimeError(
+                        'config commands are not supported '
+                        'during restore')
+                else:
+                    await pgcon.simple_query(
+                        b';'.join(query_unit.sql),
+                        ignore_data=True)
+
+            restore_blocks = await self.get_backend().compiler.call(
+                'prepare_database_restore_queries',
+                txid,
+                tx_snapshot_id,
+                blocks,
+            )
+
+            print(restore_blocks)
+
+            print('DONE')
+
+        finally:
+            for pgcon in pgcons:
+                pgcon.terminate()
+
+
+        1/0

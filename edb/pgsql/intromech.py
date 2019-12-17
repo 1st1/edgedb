@@ -72,41 +72,42 @@ class IntrospectionMech:
         if schema is None:
             schema = so.Schema()
 
-        async with self.connection.transaction(isolation='repeatable_read'):
-            schema = await self.read_roles(
-                schema)
-            schema = await self.read_modules(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema = await self.read_scalars(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema = await self.read_annotations(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema, obj_exprmap = await self.read_objtypes(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema = await self.read_casts(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema, link_exprmap = await self.read_links(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema, prop_exprmap = await self.read_link_properties(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema = await self.read_operators(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema = await self.read_functions(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema = await self.read_constraints(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema = await self.read_indexes(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema = await self.read_annotation_values(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
-            schema = await self.read_views(
-                schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema = await self.read_roles(
+            schema)
+        schema = await self.read_modules(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema, scalar_exprmap = await self.read_scalars(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema = await self.read_annotations(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema, obj_exprmap = await self.read_objtypes(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema = await self.read_casts(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema, link_exprmap = await self.read_links(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema, prop_exprmap = await self.read_link_properties(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema = await self.read_operators(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema = await self.read_functions(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema, constr_exprmap = await self.read_constraints(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema = await self.read_indexes(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema = await self.read_annotation_values(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
+        schema, view_exprmap = await self.read_views(
+            schema, only_modules=modules, exclude_modules=exclude_modules)
 
-            schema = await self.order_scalars(schema)
-            schema = await self.order_operators(schema)
-            schema = await self.order_link_properties(schema, prop_exprmap)
-            schema = await self.order_links(schema, link_exprmap)
-            schema = await self.order_objtypes(schema, obj_exprmap)
+        schema = await self.order_scalars(schema, scalar_exprmap)
+        schema = await self.order_operators(schema)
+        schema = await self.order_link_properties(schema, prop_exprmap)
+        schema = await self.order_links(schema, link_exprmap)
+        schema = await self.order_objtypes(schema, obj_exprmap)
+        schema = await self.order_constraints(schema, constr_exprmap)
+        schema = await self.order_views(schema, view_exprmap)
 
         return schema
 
