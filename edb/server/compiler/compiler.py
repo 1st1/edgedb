@@ -1257,6 +1257,7 @@ class Compiler(BaseCompiler):
                 {
                     'source': schema.get('std::uuid'),
                     'target': source.get_target(schema),
+                    'ptr_item_id': schema.get('std::uuid'),
                 },
                 {'named': True},
             )
@@ -1272,17 +1273,20 @@ class Compiler(BaseCompiler):
             cols.extend([
                 'source',
                 'target',
+                'ptr_item_id',
             ])
 
         elif isinstance(source, s_links.Link):
             props = {
                 'source': schema.get('std::uuid'),
                 'target': schema.get('std::uuid'),
+                'ptr_item_id': schema.get('std::uuid'),
             }
 
             cols.extend([
                 'source',
                 'target',
+                'ptr_item_id',
             ])
 
             for ptr in source.get_pointers(schema).objects(schema):
@@ -1403,7 +1407,7 @@ class Compiler(BaseCompiler):
             if isinstance(obj, s_props.Property):
                 assert isinstance(desc, sertypes.NamedTupleDesc)
                 desc_cols = list(desc.fields.keys())
-                if set(desc_cols) != {'source', 'target'}:
+                if set(desc_cols) != {'source', 'target', 'ptr_item_id'}:
                     raise RuntimeError(
                         'Property table dump data has extra fields')
 
@@ -1411,7 +1415,7 @@ class Compiler(BaseCompiler):
                 assert isinstance(desc, sertypes.NamedTupleDesc)
                 desc_cols = list(desc.fields.keys())
 
-                cols = ['source', 'target']
+                cols = ['source', 'target', 'ptr_item_id']
                 for ptr in obj.get_pointers(schema).objects(schema):
                     if ptr.is_endpoint_pointer(schema):
                         continue

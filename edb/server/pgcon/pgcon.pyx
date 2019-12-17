@@ -645,7 +645,7 @@ cdef class PGProto:
                             raise RuntimeError('invalid COPY IN message')
 
                         buf = WriteBuffer.new_message(b'd')
-                        buf.write_bytes(first[len(COPY_SIGNATURE):])
+                        buf.write_bytes(first[len(COPY_SIGNATURE) + 8:])
                         buf.end_message()
                         out.write_buffer(buf)
 
@@ -740,19 +740,17 @@ cdef class PGProto:
         if er:
             raise pgerror.BackendError(fields=er)
 
-        print('aasa', sql)
-
-        qbuf = WriteBuffer.new_message(b'd')
-
         cpython.PyBytes_AsStringAndSize(data, &cbuf, &clen)
         if cbuf[0] != b'd':
             raise RuntimeError('unexpected dump data message structure')
-        ln = hton.unpack_int32(cbuf + 1)
+        ln = <uint32_t>hton.unpack_int32(cbuf + 1)
 
         buf = WriteBuffer.new()
         buf.write_byte(b'd')
-        buf.write_int32(ln + len(COPY_SIGNATURE))
+        buf.write_int32(ln + len(COPY_SIGNATURE) + 8)
         buf.write_bytes(COPY_SIGNATURE)
+        buf.write_int32(0)
+        buf.write_int32(0)
         buf.write_cstr(cbuf + 5, clen - 5)
         self.write(buf)
 
@@ -779,8 +777,6 @@ cdef class PGProto:
 
         if er:
             raise pgerror.BackendError(fields=er)
-
-        print("Dddddone")
 
     async def connect(self):
         cdef:
