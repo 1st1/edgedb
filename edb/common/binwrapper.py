@@ -22,6 +22,7 @@ import struct
 
 
 class BinWrapper:
+    """A utility binary-reader wrapper over any io.BytesIO object."""
 
     i64 = struct.Struct('!q')
     i32 = struct.Struct('!l')
@@ -52,7 +53,7 @@ class BinWrapper:
     def write_i16(self, val: int) -> None:
         self.buf.write(self.i16.pack(val))
 
-    def write_len_prefixed_bytes(self, val: bytes) -> None:
+    def write_len32_prefixed_bytes(self, val: bytes) -> None:
         self.write_ui32(len(val))
         self.buf.write(val)
 

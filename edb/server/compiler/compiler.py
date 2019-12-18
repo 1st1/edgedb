@@ -1379,6 +1379,8 @@ class Compiler(BaseCompiler):
             schema=schema)
         ctx.state.start_tx()
 
+        print(schema_ddl.decode())
+
         units = self._compile(ctx=ctx, eql=schema_ddl)
         return units, ctx.state.current_tx().id
 
