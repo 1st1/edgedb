@@ -28,37 +28,14 @@ import click
 import edgedb
 
 from edb.cli import cli
+from edb.cli import utils
 from edb.edgeql.quote import quote_literal as ql, quote_ident as qi
-
-
-def connect(ctx):
-    try:
-        conn = edgedb.connect(
-            host=ctx.obj['host'], port=ctx.obj['port'],
-            user=ctx.obj['user'], database=ctx.obj['database'],
-            admin=ctx.obj['admin'], password=ctx.obj['password'],
-        )
-    except edgedb.AuthenticationError:
-        if (ctx.obj['password'] is None
-                and ctx.obj['password_prompt'] is not None):
-            password = ctx.obj['password_prompt']
-
-            conn = edgedb.connect(
-                host=ctx.obj['host'], port=ctx.obj['port'],
-                user=ctx.obj['user'], database=ctx.obj['database'],
-                admin=ctx.obj['admin'], password=password,
-            )
-        else:
-            raise
-
-    ctx.obj['conn'] = conn
-    ctx.call_on_close(lambda: conn.close())
 
 
 @cli.group()
 @click.pass_context
 def configure(ctx):
-    connect(ctx)
+    utils.connect(ctx)
 
 
 @configure.command(context_settings=dict(

@@ -103,4 +103,5 @@ def cli_dev():
 
 # Import subcommands to register them
 
+from . import dump  # noqa
 from . import mng  # noqa
