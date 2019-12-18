@@ -1791,7 +1791,7 @@ cdef class EdgeConnection:
 
             print('before commit')
 
-            await pgcon.simple_query(
+            await pgcons[0].simple_query(
                 enable_trigger_q.encode(),
                 True
             )
