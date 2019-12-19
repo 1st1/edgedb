@@ -66,17 +66,19 @@ class ConnectionArgs:
                 password=self.password,
                 **extra_con_args
             )
-        except edgedb.AuthenticationError:
+        except edgedb.AuthenticationError as ex:
             if self.password is None and self.allow_password_request:
                 password = self.get_password()
                 if password is None:
-                    raise
+                    raise click.ClickException(str(ex))
                 return self.new_connection(
                     database=database,
                     **extra_con_args
                 )
             else:
-                raise
+                raise click.ClickException(str(ex))
+        except Exception as ex:
+            raise click.ClickException(str(ex))
 
 
 _connect_params = [

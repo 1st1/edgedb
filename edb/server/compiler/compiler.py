@@ -207,7 +207,12 @@ class BaseCompiler:
         con_args = self._connect_args.copy()
         con_args['user'] = defines.EDGEDB_SUPERUSER
         con_args['database'] = self._dbname
-        return await asyncpg.connect(**con_args)
+        try:
+            return await asyncpg.connect(**con_args)
+        except asyncpg.InvalidCatalogNameError as ex:
+            raise errors.AuthenticationError(str(ex)) from ex
+        except Exception as ex:
+            raise errors.InternalServerError(str(ex)) from ex
 
     async def introspect(
             self, connection: asyncpg.Connection) -> s_schema.Schema:

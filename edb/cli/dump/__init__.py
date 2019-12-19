@@ -42,34 +42,40 @@ def dump(ctx, file: str) -> None:
 
 
 def is_empty_db(conn: edgedb.BlockingIOConnection) -> bool:
-    mods = conn.fetchall('SELECT schema::Module {name} FILTER NOT .builtin;')
-    if set(m.name for m in mods) != {'default'}:
-        return False
+    ret = conn.fetchone('''
+        SELECT (
+            mods := array_agg((
+                WITH x := (SELECT schema::Module {name} FILTER NOT .builtin)
+                SELECT x.name
+            )),
+            cnt := (
+                SELECT count(schema::Object FILTER .name LIKE "default::%")
+            )
+        );
+    ''')
 
-    return True
+    return ret.mods == ['default'] and ret.cnt == 0
 
 
 @cli.command()
 @utils.connect_command
-@click.argument('newdb', type=str)
-@click.argument('file', type=click.Path(exists=False, dir_okay=False,
+@click.option('--allow-nonempty', is_flag=True)
+@click.argument('file', type=click.Path(exists=True, dir_okay=False,
                                         resolve_path=True))
-def restore(ctx, newdb: str, file: str) -> None:
+def restore(ctx, file: str, allow_nonempty: bool) -> None:
     cargs = ctx.obj['connargs']
     conn = cargs.new_connection()
+    dbname = conn.dbname
 
-    print(is_empty_db(conn))
+    try:
+        if not is_empty_db(conn) and not allow_nonempty:
+            raise click.ClickException(
+                f'cannot restore into the {dbname!r} database: '
+                f'the database is not empty; '
+                f'consider using the -allow-nonempty option'
+            )
 
-    # conn.execute(f'CREATE DATABASE {ql_quote.quote_ident(newdb)}')
-    # try:
-    #     restorer = restoremod.RestoreImpl()
-    #     new_conn = conn = cargs.new_connection(database=newdb)
-    #     try:
-    #         restorer.restore(new_conn, file)
-    #     finally:
-    #         new_conn.close()
-    # except BaseException:
-    #     conn.execute(f'DROP DATABASE {ql_quote.quote_ident(newdb)}')
-    #     raise
-    # finally:
-    #     conn.close()
+        restorer = restoremod.RestoreImpl()
+        restorer.restore(conn, file)
+    finally:
+        conn.close()

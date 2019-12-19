@@ -78,9 +78,14 @@ class ManagementPort(baseport.Port):
         return 'compiler-mng'
 
     async def new_backend(self, *, dbname: str, dbver: int):
-        async with taskgroup.TaskGroup() as g:
-            new_pgcon_task = g.create_task(self.new_pgcon(dbname))
-            compiler_task = g.create_task(self.new_compiler(dbname, dbver))
+        try:
+            async with taskgroup.TaskGroup() as g:
+                new_pgcon_task = g.create_task(self.new_pgcon(dbname))
+                compiler_task = g.create_task(self.new_compiler(dbname, dbver))
+        except taskgroup.MultiError as ex:
+            # Errors like "database ??? does not exist" should
+            # not be obfuscated by a MultiError.
+            raise ex.__errors__[0]
 
         backend = Backend(
             new_pgcon_task.result(),
