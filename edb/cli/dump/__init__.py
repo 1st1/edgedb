@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import *  # NoQA
 
 import click
+import edgedb
 
 from edb.cli import cli
 from edb.cli import utils
@@ -40,6 +41,14 @@ def dump(ctx, file: str) -> None:
     dumper.dump(file)
 
 
+def is_empty_db(conn: edgedb.BlockingIOConnection) -> bool:
+    mods = conn.fetchall('SELECT schema::Module {name} FILTER NOT .builtin;')
+    if set(m.name for m in mods) != {'default'}:
+        return False
+
+    return True
+
+
 @cli.command()
 @utils.connect_command
 @click.argument('newdb', type=str)
@@ -48,16 +57,19 @@ def dump(ctx, file: str) -> None:
 def restore(ctx, newdb: str, file: str) -> None:
     cargs = ctx.obj['connargs']
     conn = cargs.new_connection()
-    conn.execute(f'CREATE DATABASE {ql_quote.quote_ident(newdb)}')
-    try:
-        restorer = restoremod.RestoreImpl()
-        new_conn = conn = cargs.new_connection(database=newdb)
-        try:
-            restorer.restore(new_conn, file)
-        finally:
-            new_conn.close()
-    except BaseException:
-        conn.execute(f'DROP DATABASE {ql_quote.quote_ident(newdb)}')
-        raise
-    finally:
-        conn.close()
+
+    print(is_empty_db(conn))
+
+    # conn.execute(f'CREATE DATABASE {ql_quote.quote_ident(newdb)}')
+    # try:
+    #     restorer = restoremod.RestoreImpl()
+    #     new_conn = conn = cargs.new_connection(database=newdb)
+    #     try:
+    #         restorer.restore(new_conn, file)
+    #     finally:
+    #         new_conn.close()
+    # except BaseException:
+    #     conn.execute(f'DROP DATABASE {ql_quote.quote_ident(newdb)}')
+    #     raise
+    # finally:
+    #     conn.close()
