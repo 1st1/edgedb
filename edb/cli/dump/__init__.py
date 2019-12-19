@@ -30,29 +30,28 @@ from . import restore as restoremod
 
 
 @cli.command()
-@click.pass_context
+@utils.connect_command
 @click.argument('file', type=click.Path(exists=False, dir_okay=False,
                                         resolve_path=True))
 def dump(ctx, file: str) -> None:
-    utils.connect(ctx)
-
-    conn = ctx.obj['conn']
-
+    cargs = ctx.obj['connargs']
+    conn = cargs.new_connection()
     dumper = dumpmod.DumpImpl(conn)
     dumper.dump(file)
 
 
 @cli.command()
-@click.pass_context
+@utils.connect_command
 @click.argument('newdb', type=str)
 @click.argument('file', type=click.Path(exists=False, dir_okay=False,
                                         resolve_path=True))
 def restore(ctx, newdb: str, file: str) -> None:
-    conn = utils.new_connection(ctx)
+    cargs = ctx.obj['connargs']
+    conn = cargs.new_connection()
     conn.execute(f'CREATE DATABASE {ql_quote.quote_ident(newdb)}')
     try:
         restorer = restoremod.RestoreImpl()
-        new_conn = utils.new_connection(ctx, database=newdb)
+        new_conn = conn = cargs.new_connection(database=newdb)
         try:
             restorer.restore(new_conn, file)
         finally:

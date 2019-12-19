@@ -20,44 +20,152 @@
 from __future__ import annotations
 from typing import *  # NoQA
 
+import dataclasses
+import functools
+import sys
+
 import click
 import edgedb
 
+from edb.server import defines as edgedb_defines
 
-def new_connection(
-    ctx: click.Context,
-    *,
-    database: Optional[str]=None
-) -> edgedb.BlockingIOConnection:
-    try:
-        return edgedb.connect(
-            host=ctx.obj['host'],
-            port=ctx.obj['port'],
-            user=ctx.obj['user'],
-            database=database or ctx.obj['database'],
-            admin=ctx.obj['admin'],
-            password=ctx.obj['password'],
-        )
-    except edgedb.AuthenticationError:
-        if (ctx.obj['password'] is None
-                and ctx.obj['password_prompt'] is not None):
-            password = ctx.obj['password_prompt']
 
+@dataclasses.dataclass
+class ConnectionArgs:
+
+    host: Optional[str] = None
+    port: Optional[int] = None
+    user: Optional[str] = None
+    database: Optional[str] = None
+    admin: bool = False
+    allow_password_request: bool = False
+    password: Optional[str] = None
+
+    def get_password(self) -> Optional[str]:
+        if self.password is not None:
+            return self.password
+        if self.allow_password_request and sys.stdin.isatty():
+            self.password = password_prompt()
+            return self.password
+        return None
+
+    def new_connection(
+        self,
+        *,
+        database: Optional[str] = None,
+        **extra_con_args: Any,
+    ) -> edgedb.BlockingIOConnection:
+
+        try:
             return edgedb.connect(
-                host=ctx.obj['host'],
-                port=ctx.obj['port'],
-                user=ctx.obj['user'],
-                database=database or ctx.obj['database'],
-                admin=ctx.obj['admin'],
-                password=password,
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                database=self.database if database is None else database,
+                admin=self.admin,
+                password=self.password,
+                **extra_con_args
             )
+        except edgedb.AuthenticationError:
+            if self.password is None and self.allow_password_request:
+                password = self.get_password()
+                if password is None:
+                    raise
+                return self.new_connection(
+                    database=database,
+                    **extra_con_args
+                )
+            else:
+                raise
+
+
+_connect_params = [
+    click.option('-h', '--host'),
+    click.option('-p', '--port', type=int),
+    click.option('-u', '--user'),
+    click.option('-d', '--database'),
+    click.option('--admin', is_flag=True),
+    click.option('--password/--no-password', default=None),
+    click.option('--password-from-stdin', is_flag=True),
+]
+
+
+def connect_command(func):
+
+    @functools.wraps(func)
+    def wrapper(
+        *,
+        host,
+        port,
+        user,
+        database,
+        admin,
+        password,
+        password_from_stdin,
+        **kwargs
+    ):
+        ctx = click.get_current_context()
+        ctx.ensure_object(dict)
+
+        if 'connargs' not in ctx.obj:
+            cargs = ctx.obj['connargs'] = ConnectionArgs()
+
+            if admin:
+                if not user:
+                    user = edgedb_defines.EDGEDB_SUPERUSER
+                if not database:
+                    database = edgedb_defines.EDGEDB_SUPERUSER_DB
+
+            cargs.host = host
+            cargs.port = port
+            cargs.user = user
+            cargs.database = database
+            cargs.admin = admin
+            cargs.allow_password_request = True
         else:
-            raise
+            cargs = ctx.obj['connargs']
+
+        if password in {False, True}:
+            cargs.allow_password_request = password
+
+        if password:
+            if password_from_stdin:
+                cargs.password = sys.stdin.readline().strip('\r\n')
+            else:
+                cargs.password = password_prompt()
+
+        if host is not None:
+            cargs.host = host
+        if port is not None:
+            cargs.port = port
+        if user is not None:
+            cargs.user = user
+        if database is not None:
+            cargs.database = database
+        if admin:
+            cargs.admin = True
+
+        return func(ctx, **kwargs)
+
+    for option in reversed(_connect_params):
+        wrapper = option(wrapper)
+
+    return wrapper
 
 
 def connect(
     ctx: click.Context,
 ) -> edgedb.BlockingIOConnection:
-    conn = new_connection(ctx)
+    conn = ctx.obj['connargs'].new_connection()
     ctx.obj['conn'] = conn
     ctx.call_on_close(lambda: conn.close())
+
+
+def password_prompt():
+    if sys.stdin.isatty():
+        return click.prompt('Password', hide_input=True)
+
+    raise click.UsageError(
+        'password required and input is not a TTY, please '
+        'use --password-from-stdin to provide the password value'
+    )

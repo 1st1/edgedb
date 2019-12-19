@@ -33,7 +33,7 @@ from edb.edgeql.quote import quote_literal as ql, quote_ident as qi
 
 
 @cli.group()
-@click.pass_context
+@utils.connect_command
 def configure(ctx):
     utils.connect(ctx)
 
@@ -274,21 +274,21 @@ def _process_configure_scalar(ctx, parameter, values):
 
 
 @cli.group()
-@click.pass_context
+@utils.connect_command
 def create(ctx):
-    connect(ctx)
+    utils.connect(ctx)
 
 
 @cli.group()
-@click.pass_context
+@utils.connect_command
 def alter(ctx):
-    connect(ctx)
+    utils.connect(ctx)
 
 
 @cli.group()
-@click.pass_context
+@utils.connect_command
 def drop(ctx):
-    connect(ctx)
+    utils.connect(ctx)
 
 
 def options(options):
