@@ -157,7 +157,8 @@ class TestEdgeSchemaParser(SchemaSyntaxTest):
         """
         module test {
             type LogEntry extending OwnedObject, Text {
-               optional link start_date := (SELECT datetime::datetime_current());
+               optional link start_date :=
+                    (SELECT datetime::datetime_current());
             };
         };
         """
@@ -193,7 +194,8 @@ class TestEdgeSchemaParser(SchemaSyntaxTest):
 
                 optional multi link time_spent_log -> LogEntry;
 
-                optional link start_date := (SELECT datetime::datetime_current());
+                optional link start_date :=
+                    (SELECT datetime::datetime_current());
 
                 optional multi link related_to -> Issue;
 
@@ -430,12 +432,12 @@ class TestEdgeSchemaParser(SchemaSyntaxTest):
                 required multi link spam -> Spam;
                 overloaded required single link ham -> Ham;
                 overloaded required multi link eggs -> Egg;
-                overloaded optional link knight;
-                overloaded optional link clinic {
+                overloaded link knight;
+                overloaded link clinic {
                     optional property argument -> int64;
                 };
-                overloaded optional property castle;
-                overloaded optional property tower {
+                overloaded property castle;
+                overloaded property tower {
                     constraint exclusive;
                 };
             };
@@ -1204,7 +1206,6 @@ abstract property test::foo {
             optional link foo;
         };
         """
-
 
     @tb.must_fail(errors.EdgeQLSyntaxError, r"Unexpected '::'",
                   line=4, col=34)

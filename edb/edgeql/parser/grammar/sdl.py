@@ -654,7 +654,6 @@ class ConcretePropertyBlock(Nonterm):
             target=kids[5].val,
             commands=kids[6].val,
         )
-        reject_unqualified(self.val)
 
 
 class ConcretePropertyShort(Nonterm):
@@ -694,7 +693,6 @@ class ConcretePropertyShort(Nonterm):
             cardinality=kids[1].val.cardinality,
             target=kids[5].val,
         )
-        reject_unqualified(self.val)
 
     def reduce_CreateComputableProperty(self, *kids):
         """%reduce
@@ -782,7 +780,6 @@ class ConcreteLinkBlock(Nonterm):
                         context=cmd.context)
                 else:
                     on_target_delete = cmd
-        reject_unqualified(self.val)
 
     def reduce_CreateRegularLink(self, *kids):
         """%reduce
@@ -869,7 +866,6 @@ class ConcreteLinkShort(Nonterm):
             bases=kids[4].val,
             target=kids[5].val,
         )
-        reject_unqualified(self.val)
 
     def reduce_CreateComputableLink(self, *kids):
         """%reduce

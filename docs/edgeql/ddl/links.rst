@@ -32,7 +32,8 @@ CREATE LINK
     [ WITH <with-item> [, ...] ]
     {CREATE|ALTER} TYPE <TypeName> "{"
       [ ... ]
-      CREATE {REQUIRED | OPTIONAL} [{SINGLE | MULTI}] LINK <name> := <expression>;
+      CREATE {REQUIRED | OPTIONAL}
+        [{SINGLE | MULTI}] LINK <name> := <expression>;
       [ ... ]
     "}"
 

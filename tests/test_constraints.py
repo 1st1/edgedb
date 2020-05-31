@@ -610,7 +610,8 @@ class TestConstraintsDDL(tb.NonIsolatedDDLTestCase):
                     CREATE CONSTRAINT std::exclusive;
                 };
 
-                CREATE OPTIONAL LINK link_with_exclusive_property -> std::Object;
+                CREATE OPTIONAL LINK
+                    link_with_exclusive_property -> std::Object;
             };
         """
 

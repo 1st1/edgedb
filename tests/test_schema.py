@@ -46,7 +46,7 @@ class TestSchema(tb.BaseSchemaLoadTest):
                 }
             };
             type UniqueName_2 extending UniqueName {
-                overloaded optional property name -> str {
+                overloaded property name -> str {
                     constraint exclusive
                 }
             };
@@ -76,7 +76,7 @@ class TestSchema(tb.BaseSchemaLoadTest):
     def test_schema_overloaded_03(self):
         """
             type UniqueName {
-                overloaded optional property name -> str
+                overloaded property name -> str
             };
         """
 
@@ -92,11 +92,11 @@ class TestSchema(tb.BaseSchemaLoadTest):
 
     @tb.must_fail(errors.InvalidLinkTargetError,
                   'invalid link target, expected object type, got scalar type',
-                  position=69)
+                  line=3, col=38)
     def test_schema_bad_link_02(self):
         """
             type Object {
-                link foo := 1 + 1
+                required link foo := 1 + 1
             };
         """
 
@@ -125,11 +125,11 @@ _123456789_123456789_123456789 -> Object
     @tb.must_fail(errors.InvalidPropertyTargetError,
                   "invalid property type: expected a scalar type, "
                   "or a scalar collection, got object type 'test::Object'",
-                  position=73)
+                  line=3, col=42)
     def test_schema_bad_prop_02(self):
         """
             type Object {
-                property foo := (SELECT Object)
+                required property foo := (SELECT Object)
             };
         """
 
@@ -199,7 +199,8 @@ _123456789_123456789_123456789 -> str
             type Object {
                 optional property foo -> str;
                 optional property bar -> str;
-                optional property foo_plus_bar := __source__.foo ++ __source__.bar;
+                optional property foo_plus_bar :=
+                    __source__.foo ++ __source__.bar;
             };
         """)
 
@@ -213,7 +214,8 @@ _123456789_123456789_123456789 -> str
             type Object {
                 optional multi property foo -> str;
                 optional property bar -> str;
-                optional property foo_plus_bar := __source__.foo ++ __source__.bar;
+                optional property foo_plus_bar :=
+                    __source__.foo ++ __source__.bar;
             };
         """)
 
@@ -482,7 +484,8 @@ _123456789_123456789_123456789 -> str
             CREATE MODULE default;
             CREATE ABSTRACT TYPE default::Named;
             CREATE TYPE default::User EXTENDING default::Named;
-            ALTER TYPE default::Named CREATE OPTIONAL SINGLE PROPERTY name -> std::str;
+            ALTER TYPE default::Named
+                CREATE OPTIONAL SINGLE PROPERTY name -> std::str;
             # unusual ordering of constraint definition
             ALTER TYPE default::Named
                 ALTER PROPERTY name
@@ -509,7 +512,8 @@ _123456789_123456789_123456789 -> str
             CREATE MODULE default;
             CREATE ABSTRACT TYPE default::Named;
             CREATE TYPE default::User EXTENDING default::Named;
-            ALTER TYPE default::Named CREATE OPTIONAL SINGLE PROPERTY name -> std::str;
+            ALTER TYPE default::Named
+                CREATE OPTIONAL SINGLE PROPERTY name -> std::str;
             # unusual ordering of constraint definition
             ALTER TYPE default::User
                 ALTER PROPERTY name
@@ -1157,8 +1161,8 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
             };
 
             type SpecialUser extending User {
-                overloaded optional property name extending annotated_name -> str;
-                overloaded optional link friends extending special -> SpecialUser;
+                overloaded property name extending annotated_name -> str;
+                overloaded link friends extending special -> SpecialUser;
             };
 
             abstract link special;
@@ -1299,10 +1303,10 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
                 optional property name -> str;
             };
             type Ham extending Spam {
-                overloaded optional link foo {
+                overloaded link foo {
                     constraint exclusive;
                 };
-                overloaded optional property name {
+                overloaded property name {
                     constraint exclusive;
                 };
             };
@@ -1578,7 +1582,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
         schema = r'''
         # declaring SpecialUser before User and Named
         type SpecialUser extending User {
-            overloaded optional property name -> str {
+            overloaded property name -> str {
                 annotation title := 'Name';
             }
         };
@@ -1616,7 +1620,8 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
         }
 
         type UniqueName {
-            optional link translated_label extending translated_label -> Label {
+            optional link translated_label extending translated_label -> Label
+            {
                 constraint exclusive on
                     ((__subject__@source, __subject__@lang));
                 constraint exclusive on
@@ -1724,7 +1729,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
         # Issue #1383.
         schema = r'''
         type Class extending HasAvailability {
-            link schedule :=
+            optional link schedule :=
                 .<class[IS Course].scheduledAt;
         }
         abstract type HasAvailability {
@@ -2241,7 +2246,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
     def test_migrations_equivalence_17(self):
         self._assert_migration_equivalence([r"""
             type Base {
-                property name := 'computable'
+                optional property name := 'computable'
             }
         """, r"""
             type Base {
@@ -2253,7 +2258,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
     def test_migrations_equivalence_18(self):
         self._assert_migration_equivalence([r"""
             type Base {
-                property name := 'something'
+                required property name := 'something'
             }
         """, r"""
             type Base {
@@ -2272,7 +2277,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
         """, r"""
             type Base {
                 # change a regular property to a computable
-                property name := 'computable'
+                optional property name := 'computable'
             }
         """])
 
@@ -2286,7 +2291,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
         """, r"""
             type Base {
                 # change a regular property to a computable
-                property name := 'something'
+                optional property name := 'something'
             }
         """])
 
@@ -2444,7 +2449,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
 
             # derive a type with a more restrictive link
             type DerivedParent extending Parent {
-                overloaded optional link bar -> DerivedChild;
+                overloaded link bar -> DerivedChild;
             }
         """])
 
@@ -2700,7 +2705,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
             }
 
             type Base {
-                link foo := (
+                optional link foo := (
                     SELECT Child FILTER .name = 'computable_35'
                 )
             }
@@ -2731,7 +2736,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
 
             type Base {
                 # change a regular link to a computable
-                link foo := (
+                optional link foo := (
                     SELECT Child FILTER .name = 'computable_36'
                 )
             }
@@ -2930,6 +2935,18 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
             )
         """])
 
+    def test_migrations_equivalence_43(self):
+        self._assert_migration_equivalence([r"""
+            type Base {
+                optional property name -> str
+            }
+        """, r"""
+            type Base {
+                # change a regular property to a computable
+                required property name := 'computable'
+            }
+        """])
+
     def test_migrations_equivalence_function_01(self):
         self._assert_migration_equivalence([r"""
             function hello01(a: int64) -> str
@@ -3110,7 +3127,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
             };
 
             type Derived extending Base {
-                overloaded optional link child -> Child {
+                overloaded link child -> Child {
                     optional property foo -> str
                 }
             };
@@ -3146,7 +3163,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
             };
 
             type Derived extending Base {
-                overloaded optional link child -> Child {
+                overloaded link child -> Child {
                     # move the link property later in the inheritance tree
                     optional property foo -> str
                 }
@@ -3162,7 +3179,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
             };
 
             type Derived extending Base {
-                overloaded optional link child -> Child {
+                overloaded link child -> Child {
                     optional property foo -> str
                 }
             };
@@ -3202,7 +3219,7 @@ class TestGetMigration(tb.BaseSchemaLoadTest):
             };
 
             type Derived extending Base {
-                overloaded optional link child -> Child {
+                overloaded link child -> Child {
                     # move the link property later in the inheritance tree
                     optional property foo -> str
                 }
@@ -3866,7 +3883,7 @@ class TestDescribe(tb.BaseSchemaLoadTest):
             type Child extending Parent, Parent2 {
                 annotation anno := 'annotated';
 
-                overloaded optional link foo extending f -> Foo {
+                overloaded link foo extending f -> Foo {
                     constraint exclusive {
                         annotation anno := 'annotated constraint';
                     }
@@ -3880,7 +3897,7 @@ class TestDescribe(tb.BaseSchemaLoadTest):
             """
             type test::Child extending test::Parent, test::Parent2 {
                 annotation test::anno := 'annotated';
-                overloaded optional link foo extending test::f -> test::Foo {
+                overloaded link foo extending test::f -> test::Foo {
                     annotation test::anno := 'annotated link';
                     constraint std::exclusive {
                         annotation test::anno := 'annotated constraint';
@@ -3898,7 +3915,7 @@ class TestDescribe(tb.BaseSchemaLoadTest):
                 required single link __type__ -> schema::Type {
                     readonly := true;
                 };
-                overloaded optional single link foo extending test::f -> test::Foo {
+                overloaded single link foo extending test::f -> test::Foo {
                     annotation test::anno := 'annotated link';
                     constraint std::exclusive {
                         annotation test::anno := 'annotated constraint';
@@ -3922,7 +3939,7 @@ class TestDescribe(tb.BaseSchemaLoadTest):
                 required single link __type__ -> schema::Type {
                     readonly := true;
                 };
-                overloaded optional single link foo extending test::f -> test::Foo {
+                overloaded single link foo extending test::f -> test::Foo {
                     optional single property p -> test::int_t;
                 };
                 required single property id -> std::uuid {
@@ -4272,7 +4289,9 @@ class TestDescribe(tb.BaseSchemaLoadTest):
             }
 
             type UniqueName {
-                optional link translated_label extending translated_label -> Label {
+                optional link translated_label
+                    extending translated_label -> Label
+                {
                     constraint exclusive on (
                         (__subject__@source, __subject__@lang)
                     );
@@ -4308,8 +4327,9 @@ class TestDescribe(tb.BaseSchemaLoadTest):
 
             '''
             type test::UniqueName {
-                optional single link translated_label extending test::translated_label
-                        -> test::Label {
+                optional single link translated_label
+                    extending test::translated_label -> test::Label
+                {
                     constraint std::exclusive on (WITH
                         MODULE test
                     SELECT
@@ -4336,8 +4356,8 @@ class TestDescribe(tb.BaseSchemaLoadTest):
                 required single link __type__ -> schema::Type {
                     readonly := true;
                 };
-                optional single link translated_label extending test::translated_label
-                    -> test::Label
+                optional single link translated_label
+                    extending test::translated_label -> test::Label
                 {
                     optional single property lang -> std::str;
                     optional single property prop1 -> std::str;
@@ -4355,8 +4375,8 @@ class TestDescribe(tb.BaseSchemaLoadTest):
                 required single link __type__ -> schema::Type {
                     readonly := true;
                 };
-                optional single link translated_label extending test::translated_label
-                    -> test::Label
+                optional single link translated_label
+                    extending test::translated_label -> test::Label
                 {
                     constraint std::exclusive on (__subject__@prop1);
                     constraint std::exclusive on (
@@ -4656,7 +4676,8 @@ class TestDescribe(tb.BaseSchemaLoadTest):
                       schema::Type,
                       schema::Source
             {
-                CREATE OPTIONAL MULTI LINK intersection_of -> schema::ObjectType;
+                CREATE OPTIONAL MULTI LINK
+                    intersection_of -> schema::ObjectType;
                 CREATE OPTIONAL MULTI LINK union_of -> schema::ObjectType;
                 CREATE OPTIONAL SINGLE PROPERTY is_compound_type := (
                     (EXISTS (.union_of) OR EXISTS (.intersection_of))
@@ -4682,7 +4703,8 @@ class TestDescribe(tb.BaseSchemaLoadTest):
             {
                 optional multi link intersection_of -> schema::ObjectType;
                 optional multi link links := (.pointers[IS schema::Link]);
-                optional multi link properties := (.pointers[IS schema::Property]);
+                optional multi link properties :=
+                    (.pointers[IS schema::Property]);
                 optional multi link union_of -> schema::ObjectType;
                 optional single property is_compound_type := (
                     (EXISTS (.union_of) OR EXISTS (.intersection_of))

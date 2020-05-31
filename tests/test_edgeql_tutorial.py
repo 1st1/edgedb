@@ -216,7 +216,7 @@ class TestEdgeQLTutorial(tb.QueryTestCase):
                     type Person {
                         optional property first_name -> str;
                         required property last_name -> str;
-                        property name :=
+                        optional property name :=
                             .first_name ++ ' ' ++ .last_name
                             IF EXISTS .first_name
                             ELSE .last_name;

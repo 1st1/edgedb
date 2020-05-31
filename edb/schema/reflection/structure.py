@@ -600,11 +600,12 @@ def generate_structure(
                 if prop_ptr is None:
                     schema = _run_ddl(
                         f'''
-                            ALTER TYPE {rschema_name} {{
-                                ALTER LINK {refdict.attr} {{
-                                    CREATE OPTIONAL PROPERTY {fn} -> {storage.ptrtype};
-                                }}
+                        ALTER TYPE {rschema_name} {{
+                            ALTER LINK {refdict.attr} {{
+                                CREATE OPTIONAL PROPERTY {fn} ->
+                                                            {storage.ptrtype};
                             }}
+                        }}
                         ''',
                         schema=schema,
                         delta=delta,

@@ -875,7 +875,7 @@ class TestEdgeQLDataMigration(tb.DDLTestCase):
         """)
         await self._migrate(r"""
             type Base {
-                property name := 'computable'
+                optional property name := 'computable'
             }
         """)
         await self.con.execute(r"""
@@ -927,7 +927,7 @@ class TestEdgeQLDataMigration(tb.DDLTestCase):
         await self._migrate(r"""
             type Base {
                 # change a regular property to a computable
-                property name := 'computable'
+                optional property name := 'computable'
             }
         """)
 
@@ -1894,7 +1894,7 @@ class TestEdgeQLDataMigration(tb.DDLTestCase):
             }
 
             type Base {
-                link foo := (
+                optional link foo := (
                     SELECT Child FILTER .name = 'computable_35'
                 )
             }
@@ -2007,7 +2007,7 @@ class TestEdgeQLDataMigration(tb.DDLTestCase):
 
             type Base {
                 # change a regular link to a computable
-                link foo := (
+                optional link foo := (
                     SELECT Child FILTER .name = 'computable_36'
                 )
             }
@@ -2729,7 +2729,7 @@ class TestEdgeQLDataMigration(tb.DDLTestCase):
 
             type Base {
                 # use the function in computable value
-                property foo := len(hello07(2) ++ hello07(123))
+                optional property foo := len(hello07(2) ++ hello07(123))
             }
         """)
         await self.con.execute(r"""
@@ -2750,7 +2750,7 @@ class TestEdgeQLDataMigration(tb.DDLTestCase):
 
             type Base {
                 # use the function in computable value
-                property foo := len(hello07(2) ++ hello07(123))
+                optional property foo := len(hello07(2) ++ hello07(123))
             }
         """)
 

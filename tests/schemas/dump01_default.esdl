@@ -109,10 +109,10 @@ type D {
     required property num -> int64;
 
     optional link single_link -> C {
-        annotation title := 'optional single link to C';
+        annotation title := 'single link to C';
     }
     optional multi link multi_link -> C {
-        annotation title := 'optional multi link to C';
+        annotation title := 'multi link to C';
     }
 }
 
@@ -120,12 +120,12 @@ type D {
 type E extending D {
     annotation title := 'E';
 
-    overloaded optional link single_link -> C {
+    overloaded link single_link -> C {
         optional property lp0 -> str {
             annotation title := 'single lp0';
         }
     }
-    overloaded optional multi link multi_link -> C {
+    overloaded multi link multi_link -> C {
         optional property lp1 -> str {
             annotation title := 'single lp1';
         }

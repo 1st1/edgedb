@@ -948,7 +948,8 @@ class TestEdgeQLDDL(tb.DDLTestCase):
             await self.con.execute("""
                 CREATE TYPE test::TestLinkPropType_02 {
                     CREATE OPTIONAL LINK test_linkprop_link_02 -> std::Object {
-                        CREATE OPTIONAL MULTI PROPERTY test_link_prop_02 -> std::int64;
+                        CREATE OPTIONAL MULTI PROPERTY
+                            test_link_prop_02 -> std::int64;
                     };
                 };
             """)
@@ -981,7 +982,8 @@ class TestEdgeQLDDL(tb.DDLTestCase):
 
                 ALTER TYPE test::TestLinkPropType_04 {
                     ALTER LINK test_linkprop_link_04 {
-                        CREATE OPTIONAL MULTI PROPERTY test_link_prop_04 -> std::int64;
+                        CREATE OPTIONAL MULTI PROPERTY
+                            test_link_prop_04 -> std::int64;
                     };
                 };
             """)
@@ -993,7 +995,8 @@ class TestEdgeQLDDL(tb.DDLTestCase):
             await self.con.execute("""
                 CREATE TYPE test::TestLinkPropType_05 {
                     CREATE OPTIONAL LINK test_linkprop_link_05 -> std::Object {
-                        CREATE OPTIONAL PROPERTY test_link_prop_05 -> std::int64;
+                        CREATE OPTIONAL PROPERTY
+                            test_link_prop_05 -> std::int64;
                     };
                 };
 
@@ -1013,7 +1016,8 @@ class TestEdgeQLDDL(tb.DDLTestCase):
             await self.con.execute("""
                 CREATE TYPE test::TestLinkPropType_06 {
                     CREATE OPTIONAL LINK test_linkprop_link_06 -> std::Object {
-                        CREATE OPTIONAL MULTI PROPERTY test_link_prop_06 -> std::int64;
+                        CREATE OPTIONAL MULTI PROPERTY
+                            test_link_prop_06 -> std::int64;
                     };
                 };
 
@@ -1146,8 +1150,8 @@ class TestEdgeQLDDL(tb.DDLTestCase):
             async with self.con.transaction():
                 await self.con.execute("""
                     CREATE TYPE test::Foo {
-                        CREATE OPTIONAL PROPERTY f123456789_123456789_123456789_\
-123456789_123456789_123456789_123456789_123456789 -> std::str;
+                        CREATE OPTIONAL PROPERTY f123456789_123456789_\
+123456789_123456789_123456789_123456789_123456789_123456789 -> std::str;
                     };
                 """)
 
@@ -2327,7 +2331,8 @@ class TestEdgeQLDDL(tb.DDLTestCase):
     async def test_edgeql_ddl_property_computable_circular(self):
         await self.con.execute('''\
             CREATE TYPE test::CompPropCircular {
-                CREATE OPTIONAL PROPERTY prop := (SELECT count(test::CompPropCircular))
+                CREATE OPTIONAL PROPERTY prop :=
+                    (SELECT count(test::CompPropCircular))
             };
         ''')
 
@@ -2338,14 +2343,16 @@ class TestEdgeQLDDL(tb.DDLTestCase):
             await self.con.execute('''\
                 CREATE TYPE test::CompPropBad;
                 ALTER TYPE test::CompPropBad {
-                    CREATE OPTIONAL PROPERTY prop := (SELECT std::Object LIMIT 1);
+                    CREATE OPTIONAL PROPERTY prop :=
+                        (SELECT std::Object LIMIT 1);
                 };
             ''')
 
     async def test_edgeql_ddl_link_computable_circular_01(self):
         await self.con.execute('''\
             CREATE TYPE test::CompLinkCircular {
-                CREATE OPTIONAL LINK l := (SELECT test::CompLinkCircular LIMIT 1)
+                CREATE OPTIONAL LINK l :=
+                    (SELECT test::CompLinkCircular LIMIT 1)
             };
         ''')
 
@@ -3575,8 +3582,8 @@ class TestEdgeQLDDL(tb.DDLTestCase):
 
             CREATE TYPE test::LinkedObj04;
             CREATE TYPE test::RenameObj04 {
-                CREATE OPTIONAL MULTI LINK rename_link_04 EXTENDING test::rename_link_04
-                    -> test::LinkedObj04;
+                CREATE OPTIONAL MULTI LINK rename_link_04
+                    EXTENDING test::rename_link_04 -> test::LinkedObj04;
             };
 
             INSERT test::LinkedObj04;
@@ -4404,7 +4411,9 @@ class TestEdgeQLDDL(tb.DDLTestCase):
             CREATE ABSTRACT ANNOTATION test::dropattr;
             CREATE ABSTRACT LINK test::l1_parent;
             CREATE TYPE test::DropB {
-                CREATE OPTIONAL LINK l1 EXTENDING test::l1_parent -> test::DropA {
+                CREATE OPTIONAL LINK l1 EXTENDING
+                    test::l1_parent -> test::DropA
+                {
                     CREATE ANNOTATION test::dropattr := 'foo';
                 };
             };

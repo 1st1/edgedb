@@ -1051,7 +1051,7 @@ class PointerCommand(
         This may be called in the context of either Create or Alter.
         """
         if astnode.is_required is None:
-            if not context.dumprestore:
+            if not context.dumprestore and not astnode.declared_overloaded:
                 raise EdgeQLSyntaxError(
                     f'specify an explicit REQUIRED or OPTIONAL qualifier for'
                     f' {astnode.name.name}',
