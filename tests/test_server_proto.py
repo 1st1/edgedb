@@ -259,26 +259,27 @@ class TestServerProto(tb.QueryTestCase):
             'COMMIT',
         ]
 
-        for _ in range(3):
-            for q in qs:
-                r = await self.con.query(q)
-                self.assertEqual(r, [])
+        # for _ in range(3):
+        for q in qs:
+            print('>>>>>>>', q)
+            r = await self.con.query(q)
+            self.assertEqual(r, [])
 
-            for q in qs:
-                r = await self.con.query_json(q)
-                self.assertEqual(r, '[]')
+        #     for q in qs:
+        #         r = await self.con.query_json(q)
+        #         self.assertEqual(r, '[]')
 
-        with self.assertRaisesRegex(
-                edgedb.InterfaceError,
-                r'cannot be executed with query_one\(\).*'
-                r'not return'):
-            await self.con.query_one('START TRANSACTION')
+        # with self.assertRaisesRegex(
+        #         edgedb.InterfaceError,
+        #         r'cannot be executed with query_one\(\).*'
+        #         r'not return'):
+        #     await self.con.query_one('START TRANSACTION')
 
-        with self.assertRaisesRegex(
-                edgedb.InterfaceError,
-                r'cannot be executed with query_one_json\(\).*'
-                r'not return'):
-            await self.con.query_one_json('START TRANSACTION')
+        # with self.assertRaisesRegex(
+        #         edgedb.InterfaceError,
+        #         r'cannot be executed with query_one_json\(\).*'
+        #         r'not return'):
+        #     await self.con.query_one_json('START TRANSACTION')
 
     async def test_server_proto_fetch_single_command_04(self):
         with self.assertRaisesRegex(edgedb.ProtocolError,
@@ -1804,10 +1805,13 @@ class TestServerProto(tb.QueryTestCase):
         tx1 = con1.transaction(isolation='serializable')
         tx2 = con2.transaction(isolation='serializable')
         await tx1.start()
+        print('>>>>>>>>>  TX1')
         await tx2.start()
+        print('>>>>>>>>>  TX2')
 
         try:
             async def worker(con, tx, n):
+                print('>>>>>>>>>', con, 1)
                 await con.query_one(f'''
                     WITH MODULE test
                     SELECT count(TransactionTest FILTER .name LIKE 'tx_17_{n}')
@@ -1815,6 +1819,7 @@ class TestServerProto(tb.QueryTestCase):
 
                 n2 = 1 if n == 2 else 2
 
+                print('>>>>>>>>>', con, 2)
                 await con.query(f'''
                     WITH MODULE test
                     INSERT TransactionTest {{
@@ -1822,14 +1827,21 @@ class TestServerProto(tb.QueryTestCase):
                     }}
                 ''')
 
+                print('>>>>>>>>>', con, 3)
+
+            print('>>>>>>>>> before gather')
             await asyncio.gather(
                 worker(con1, tx1, 1), worker(con2, tx2, 2)
             )
+            print('>>>>>>>>> after gather')
 
             await tx1.commit()
 
+            print('>>>>>>>>> tx1 commited')
+
             with self.assertRaises(edgedb.TransactionSerializationError):
                 await tx2.commit()
+            print('>>>>>>>>> after tx2.commit')
 
         finally:
             if tx1.is_active():

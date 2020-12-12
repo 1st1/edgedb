@@ -32,6 +32,7 @@ from edb.edgeql import parser as ql_parser
 
 from edb.server import config
 from edb.server import compiler as edbcompiler
+from edb.server import connpool
 from edb.server import defines
 from edb.server import http
 from edb.server import http_edgeql_port
@@ -83,6 +84,12 @@ class Server:
         self._cluster = cluster
         self._pg_addr = self._get_pgaddr()
 
+        self._pg_pool = connpool.Pool(
+            connect=self._pg_connect,
+            disconnect=self._pg_disconnect,
+            max_capacity=50,
+        )
+
         # DB state will be initialized in init().
         self._dbindex = None
 
@@ -111,6 +118,12 @@ class Server:
         # `await self._acquire_sys_pgcon()`.
         self.__sys_pgcon = None
         self._sys_pgcon_waiters = None
+
+    async def _pg_connect(self, dbname):
+        return await pgcon.connect(self._get_pgaddr(), dbname)
+
+    async def _pg_disconnect(self, conn):
+        conn.terminate()
 
     async def init(self):
         self.__sys_pgcon = await self.new_pgcon(defines.EDGEDB_SYSTEM_DB)
@@ -149,8 +162,22 @@ class Server:
     def _get_pgaddr(self):
         return self._cluster.get_connection_spec()
 
+    # XXX
     async def new_pgcon(self, dbname):
         return await pgcon.connect(self._get_pgaddr(), dbname)
+
+    async def acquire_pgcon(self, dbname):
+        return await self._pg_pool.acquire(dbname)
+
+    def release_pgcon(self, dbname, conn):
+        discard = False
+        if not conn.is_connected() or conn.in_tx():
+            discard = True
+        try:
+            self._pg_pool.release(dbname, conn, discard=discard)
+        except Exception as ex:
+            print(')))))a', type(ex), ex)
+            raise
 
     async def new_compiler(self, dbname, dbver):
         compiler_worker = await self._compiler_manager.spawn_worker()

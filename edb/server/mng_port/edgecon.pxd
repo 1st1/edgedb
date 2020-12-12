@@ -29,7 +29,7 @@ from edb.server.pgproto.pgproto cimport (
 )
 
 from edb.server.dbview cimport dbview
-
+from edb.server.pgcon cimport pgcon
 from edb.server.pgproto.debug cimport PG_DEBUG
 
 
@@ -104,6 +104,9 @@ cdef class EdgeConnection:
         tuple protocol_version
         tuple max_protocol
         object timer
+
+        pgcon.PGConnection _intx_pgcon
+        int _get_pgcon_cc
 
     cdef parse_io_format(self, bytes mode)
     cdef parse_cardinality(self, bytes card)

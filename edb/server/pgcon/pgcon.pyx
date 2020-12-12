@@ -188,7 +188,7 @@ cdef class PGConnection:
 
     def debug_print(self, *args):
         print(
-            '::PGPROTO::',
+            '::PGCONN::',
             *args,
         )
 
