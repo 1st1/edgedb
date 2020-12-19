@@ -719,6 +719,7 @@ class TestServerProto(tb.QueryTestCase):
 
         con2 = await self.connect(database=self.con.dbname)
 
+        await self.con.query('START TRANSACTION')
         await self.con.query(
             'select sys::advisory_lock(<int64>$0)', lock_key)
 
@@ -736,10 +737,10 @@ class TestServerProto(tb.QueryTestCase):
                 await con2.aclose()
 
         finally:
-            self.assertEqual(
-                await self.con.query(
-                    'select sys::advisory_unlock(<int64>$0)', lock_key),
-                [True])
+            k = await self.con.query(
+                'select sys::advisory_unlock(<int64>$0)', lock_key)
+            await self.con.query('ROLLBACK')
+            self.assertEqual(k, [True])
 
     async def test_server_proto_log_message_01(self):
         msgs = []

@@ -201,7 +201,6 @@ cdef class EdgeConnection:
         self._get_pgcon_cc += 1
         if self._get_pgcon_cc > 1:
             raise RuntimeError('nested get_pgcon() calls are prohibited')
-        print('GET CONN', self)
         if self.dbview.in_tx():
             if self._intx_pgcon is None:
                 raise RuntimeError(
@@ -211,7 +210,6 @@ cdef class EdgeConnection:
 
         conn = await self.port.get_server().acquire_pgcon(
             self.dbview.dbname)
-        print('GOT CONN', conn)
         return conn
 
     def maybe_release_pgcon(self, pgcon.PGConnection conn):
@@ -223,32 +221,20 @@ cdef class EdgeConnection:
         if self.dbview.in_tx():
             if self._intx_pgcon is not None:
                 if self._intx_pgcon is not conn:
-                    print('ERR CONN 1')
                     raise RuntimeError(
                         'mismatched released connection and _intx_pgcon')
             else:
                 self._intx_pgcon = conn
-            print('KEEP CONN', self)
         else:
             if self._intx_pgcon is not None:
                 if self._intx_pgcon is not conn:
-                    print('ERR CONN 2')
                     raise RuntimeError(
                         'mismatched released connection and _intx_pgcon '
                         'coming out of a transaction')
                 self._intx_pgcon = None
 
-            print('RELEASE CONN', self)
-
-            try:
-                self.port.get_server().release_pgcon(
-                    self.dbview.dbname, conn)
-            except Exception as ex:
-                print('WWHAAAAT', type(ex), ex)
-                raise ex
-            else:
-                print('RELEASED CONN')
-
+            self.port.get_server().release_pgcon(
+                self.dbview.dbname, conn)
 
     cdef get_backend(self):
         if self._con_status is EDGECON_BAD:
@@ -1651,7 +1637,8 @@ cdef class EdgeConnection:
             WriteBuffer buf
             int16_t fields_len
 
-        self.debug_print('EXCEPTION', type(exc).__name__, exc)
+        if self.debug:
+            self.debug_print('EXCEPTION', type(exc).__name__, exc)
 
         if debug.flags.server:
             self.loop.call_exception_handler({

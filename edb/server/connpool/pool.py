@@ -157,10 +157,10 @@ class Block(typing.Generic[C]):
             0
         )
 
-    def inc_acquire_counter(self):
+    def inc_acquire_counter(self) -> None:
         self.conn_acquired_num += 1
 
-    def dec_acquire_counter(self):
+    def dec_acquire_counter(self) -> None:
         self.conn_acquired_num -= 1
 
     def try_steal(self) -> typing.Optional[C]:
@@ -853,7 +853,7 @@ class Pool(BasePool[C]):
 
         return conn
 
-    def release(self, dbname: str, conn: C) -> None:
+    def release(self, dbname: str, conn: C, *, discard: bool=False) -> None:
         try:
             block = self._blocks[dbname]
         except KeyError:
@@ -882,6 +882,11 @@ class Pool(BasePool[C]):
         conn_state.in_use_since = 0
 
         self._maybe_schedule_tick()
+
+        if discard:
+            self._discard_conn(block, conn)
+            return
+
         if not self._maybe_free_conn(block, conn):
             block.release(conn)
 
