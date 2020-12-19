@@ -356,7 +356,7 @@ class SimulatedCase(unittest.TestCase, metaclass=SimulatedCaseMeta):
             f.write(html)
 
 
-class TestServerConnpool(SimulatedCase):
+class TestServerConnpoolSimulation(SimulatedCase):
 
     def test_server_connpool_1(self):
         return Spec(
@@ -576,6 +576,84 @@ class TestServerConnpool(SimulatedCase):
                 )
             ]
         )
+
+
+class TestServerConnectionPool(unittest.TestCase):
+
+    def make_fake_connect(
+        self,
+        cost_base: float=0.01,
+        cost_var: float=0.005
+    ):
+        async def fake_connect(dbname):
+            dur = max(cost_base + random.triangular(-cost_var, cost_var), 0.01)
+            await asyncio.sleep(dur)
+            return FakeConnection(dbname)
+
+        return fake_connect
+
+    def make_fake_disconnect(
+        self,
+        cost_base: float=0.01,
+        cost_var: float=0.005
+    ):
+        async def fake_disconnect(conn):
+            dur = max(cost_base + random.triangular(-cost_var, cost_var), 0.01)
+            conn.on_disconnect()
+            await asyncio.sleep(dur)
+            conn.on_disconnect()
+
+        return fake_disconnect
+
+    def test_connpool_longtrans(self):
+        # The test creates a pool with a capacity of 10 connections.
+        # We then acquire a connection to the `bbb` database.
+        # We then acquire a connection to the `aaa` database.
+        # We then try to acquire yet another connection to the `aaa` database,
+        # while the first two connections are still non-released.
+        #
+        # Previously the pool algorithm would not grant the third connection
+        # because the `aaa` quota was set to 1 at the time the first connection
+        # to it was acquired. The pool then failed to recognize that there's
+        # yet another connection waiting to be acquired and the whole thing
+        # would deadlock.
+
+        async def q0(pool, event):
+            conn = await pool.acquire('bbb')
+            await event.wait()
+            pool.release('bbb', conn)
+
+        async def q1(pool, event):
+            conn = await pool.acquire('aaa')
+            await event.wait()
+            pool.release('aaa', conn)
+
+        async def q2(pool, event):
+            conn = await pool.acquire('aaa')
+            event.set()
+            pool.release('aaa', conn)
+
+        async def test(delay: float):
+            event = asyncio.Event()
+
+            pool = connpool.Pool(
+                connect=self.make_fake_connect(),
+                disconnect=self.make_fake_disconnect(),
+                max_capacity=10,
+            )
+
+            async with taskgroup.TaskGroup() as g:
+                g.create_task(q0(pool, event))
+                await asyncio.sleep(delay)
+                g.create_task(q1(pool, event))
+                await asyncio.sleep(delay)
+                g.create_task(q2(pool, event))
+
+        async def main():
+            await asyncio.wait_for(test(0.05), timeout=5)
+            await asyncio.wait_for(test(0.000001), timeout=5)
+
+        asyncio.run(main())
 
 
 HTML_TPL = R'''<!DOCTYPE html>
@@ -1268,4 +1346,4 @@ HTML_TPL = R'''<!DOCTYPE html>
 
 
 if __name__ == '__main__':
-    TestServerConnpool().simulate_all_and_collect_stats()
+    TestServerConnpoolSimulation().simulate_all_and_collect_stats()

@@ -100,8 +100,8 @@ class Block(typing.Generic[C]):
     pending_conns: int
     last_connect_timestamp: float
 
-    waiters_num: int
-    waiters: typing.Deque[typing.Awaitable[None]]
+    conn_acquired_num: int
+    conn_waiters_num: int
     conn_waiters: typing.Deque[asyncio.Future[None]]
     conn_queue: typing.Deque[C]
 
@@ -123,6 +123,7 @@ class Block(typing.Generic[C]):
 
         self.loop = loop
 
+        self.conn_acquired_num = 0
         self.conn_waiters_num = 0
         self.conn_waiters = collections.deque()
         self.conn_queue = collections.deque()
@@ -144,6 +145,23 @@ class Block(typing.Generic[C]):
 
     def count_conns_over_quota(self) -> int:
         return max(self.count_conns() - self.quota, 0)
+
+    def count_approx_available_conns(self) -> int:
+        # It's approximate because there might be a race when a connection
+        # is being returned to the pool but not yet acquired by a waiter,
+        # in which case the number isn't going to be accurate.
+        return max(
+            self.count_conns() -
+            self.conn_acquired_num -
+            self.conn_waiters_num,
+            0
+        )
+
+    def inc_acquire_counter(self):
+        self.conn_acquired_num += 1
+
+    def dec_acquire_counter(self):
+        self.conn_acquired_num -= 1
 
     def try_steal(self) -> typing.Optional[C]:
         if self.conn_queue:
@@ -235,8 +253,8 @@ class BasePool(typing.Generic[C]):
         *,
         connect: Connector[C],
         disconnect: Disconnector[C],
-        stats_collector: typing.Optional[StatsCollector],
         max_capacity: int,
+        stats_collector: typing.Optional[StatsCollector]=None,
     ) -> None:
         self._connect_cb = connect
         self._disconnect_cb = disconnect
@@ -442,8 +460,8 @@ class Pool(BasePool[C]):
         *,
         connect: Connector[C],
         disconnect: Disconnector[C],
-        stats_collector: typing.Optional[StatsCollector],
         max_capacity: int,
+        stats_collector: typing.Optional[StatsCollector]=None,
     ) -> None:
         super().__init__(
             connect=connect,
@@ -794,7 +812,11 @@ class Pool(BasePool[C]):
                 self._schedule_new_conn(block)
                 return await block.acquire()
 
-            if not block_nconns or block_nconns < block.quota:
+            if (
+                not block_nconns or
+                block_nconns < block.quota or
+                not block.count_approx_available_conns()
+            ):
                 # Block has no connections at all.
                 self._schedule_new_conn(block)
                 return await block.acquire()
@@ -823,9 +845,11 @@ class Pool(BasePool[C]):
         finally:
             self._nacquires -= 1
 
-        assert not self._blocks[dbname].conns[conn].in_use
-        self._blocks[dbname].conns[conn].in_use = True
-        self._blocks[dbname].conns[conn].in_use_since = time.monotonic()
+        block = self._blocks[dbname]
+        assert not block.conns[conn].in_use
+        block.inc_acquire_counter()
+        block.conns[conn].in_use = True
+        block.conns[conn].in_use_since = time.monotonic()
 
         return conn
 
@@ -852,6 +876,7 @@ class Pool(BasePool[C]):
                 f'never acquired from the pool'
             ) from None
 
+        block.dec_acquire_counter()
         block.querytime_avg.add(time.monotonic() - conn_state.in_use_since)
         conn_state.in_use = False
         conn_state.in_use_since = 0
@@ -874,8 +899,8 @@ class _NaivePool(BasePool[C]):
         self,
         connect: Connector[C],
         disconnect: Disconnector[C],
-        stats_collector: typing.Optional[StatsCollector],
         max_capacity: int,
+        stats_collector: typing.Optional[StatsCollector]=None,
     ) -> None:
         super().__init__(
             connect=connect,
