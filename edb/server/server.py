@@ -126,7 +126,7 @@ class Server:
         conn.terminate()
 
     async def init(self):
-        self.__sys_pgcon = await self.new_pgcon(defines.EDGEDB_SYSTEM_DB)
+        self.__sys_pgcon = await self._pg_connect(defines.EDGEDB_SYSTEM_DB)
         await self.__sys_pgcon.set_server(self)
         self._sys_pgcon_waiters = asyncio.Queue()
         self._sys_pgcon_waiters.put_nowait(self.__sys_pgcon)
@@ -161,10 +161,6 @@ class Server:
 
     def _get_pgaddr(self):
         return self._cluster.get_connection_spec()
-
-    # XXX
-    async def new_pgcon(self, dbname):
-        return await pgcon.connect(self._get_pgaddr(), dbname)
 
     async def acquire_pgcon(self, dbname):
         return await self._pg_pool.acquire(dbname)
