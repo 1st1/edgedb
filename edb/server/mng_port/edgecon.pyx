@@ -888,6 +888,10 @@ cdef class EdgeConnection:
             for query_unit in units:
                 self.dbview.start(query_unit)
                 try:
+                    if query_unit.drop_db:
+                        await self.port.get_server()._on_drop_db(
+                            query_unit.drop_db, self.dbview.dbname)
+
                     if query_unit.system_config:
                         await self._execute_system_config(query_unit, conn)
                     else:
@@ -1287,6 +1291,9 @@ cdef class EdgeConnection:
         conn = await self.get_pgcon()
         try:
             self.dbview.start(query_unit)
+            if query_unit.drop_db:
+                await self.port.get_server()._on_drop_db(
+                    query_unit.drop_db, self.dbview.dbname)
             if query_unit.system_config:
                 await self._execute_system_config(query_unit, conn)
             else:

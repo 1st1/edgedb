@@ -790,6 +790,10 @@ class Compiler(BaseCompiler):
         else:
             sql = (block.to_string().encode('utf-8'),)
 
+        drop_db = None
+        if isinstance(stmt, qlast.DropDatabase):
+            drop_db = stmt.name.name
+
         if debug.flags.delta_execute:
             debug.header('Delta Script')
             debug.dump_code(b'\n'.join(sql), lexer='sql')
@@ -799,6 +803,7 @@ class Compiler(BaseCompiler):
             is_transactional=is_transactional,
             single_unit=not is_transactional,
             new_types=new_types,
+            drop_db=drop_db
         )
 
     def _compile_ql_migration(self, ctx: CompileContext, ql: qlast.Migration):
@@ -1484,8 +1489,10 @@ class Compiler(BaseCompiler):
         for stmt in statements:
             comp: dbstate.BaseQuery = self._compile_dispatch_ql(ctx, stmt)
 
+            drop_db = isinstance(comp, dbstate.DDLQuery) and comp.drop_db
+
             if unit is not None:
-                if comp.single_unit:
+                if comp.single_unit or drop_db:
                     units.append(unit)
                     unit = None
 
@@ -1494,7 +1501,8 @@ class Compiler(BaseCompiler):
                     dbver=ctx.state.dbver,
                     sql=(),
                     status=status.get_status(stmt),
-                    cardinality=default_cardinality)
+                    cardinality=default_cardinality,
+                )
             else:
                 unit.status = status.get_status(stmt)
 
@@ -1532,6 +1540,10 @@ class Compiler(BaseCompiler):
                 unit.sql += comp.sql
                 unit.has_ddl = True
                 unit.new_types = comp.new_types
+                unit.drop_db = drop_db
+                if comp.drop_db:
+                    units.append(unit)
+                    unit = None
 
             elif isinstance(comp, dbstate.TxControlQuery):
                 unit.sql += comp.sql

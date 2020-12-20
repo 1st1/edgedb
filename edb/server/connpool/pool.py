@@ -439,12 +439,12 @@ class BasePool(typing.Generic[C]):
             dbname=block.dbname, event='connect', value=block.count_conns())
         self._get_loop().create_task(self._connect(block, started_at))
 
-    def _discard_conn(self, block: Block[C], conn: C) -> None:
+    async def _discard_conn(self, block: Block[C], conn: C) -> None:
         assert not block.conns[conn].in_use
         block.conns.pop(conn)
         self._log_to_snapshot(
             dbname=block.dbname, event='disconnect', value=block.count_conns())
-        self._get_loop().create_task(self._disconnect(conn))
+        await self._disconnect(conn)
 
 
 class Pool(BasePool[C]):
@@ -728,7 +728,8 @@ class Pool(BasePool[C]):
                 if to_block is not None:
                     self._schedule_transfer(block, conn, to_block)
                 else:
-                    self._discard_conn(block, conn)
+                    self._get_loop().create_task(
+                        self._discard_conn(block, conn))
             else:
                 break
 
@@ -884,11 +885,28 @@ class Pool(BasePool[C]):
         self._maybe_schedule_tick()
 
         if discard:
-            self._discard_conn(block, conn)
+            self._get_loop().create_task(
+                self._discard_conn(block, conn))
             return
 
         if not self._maybe_free_conn(block, conn):
             block.release(conn)
+
+    async def prune_inactive_connections(self, dbname: str) -> None:
+        try:
+            block = self._blocks[dbname]
+        except KeyError:
+            return None
+
+        conns = []
+        while (conn := block.try_steal()) is not None:
+            conns.append(conn)
+
+        if conns:
+            await asyncio.gather(
+                *(self._discard_conn(block, conn) for conn in conns),
+                return_exceptions=True
+            )
 
 
 class _NaivePool(BasePool[C]):

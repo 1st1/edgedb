@@ -20,6 +20,7 @@ import json
 import os.path
 import pickle
 import typing
+import weakref
 
 import immutables
 
@@ -50,6 +51,7 @@ cdef class Database:
         self._dbver = uuidgen.uuid1mc().bytes
 
         self._index = index
+        self._views = weakref.WeakSet()
 
         self._eql_to_compiled = lru.LRUMapping(
             maxsize=defines._MAX_QUERIES_CACHE)
@@ -75,8 +77,9 @@ cdef class Database:
         self._eql_to_compiled[key] = compiled
 
     cdef _new_view(self, user, query_cache):
-        return DatabaseConnectionView(self, user=user, query_cache=query_cache)
-
+        view = DatabaseConnectionView(self, user=user, query_cache=query_cache)
+        self._views.add(view)
+        return view
 
 cdef class DatabaseConnectionView:
 
@@ -342,6 +345,14 @@ cdef class DatabaseIndex:
         self._sys_queries = None
         self._instance_data = None
         self._sys_config = None
+
+    def count_connections(self, dbname: str):
+        try:
+            db = self._dbs[dbname]
+        except KeyError:
+            return 0
+
+        return len((<Database>db)._views)
 
     async def get_sys_query(self, conn, key: str) -> bytes:
         if self._sys_queries is None:

@@ -287,6 +287,23 @@ class Server:
         else:
             logging.info('stopped port for config: %r', portconf)
 
+    async def _on_drop_db(self, dbname: str, current_dbname: str) -> None:
+        assert self._dbindex is not None
+
+        if current_dbname == dbname:
+            raise errors.ExecutionError(
+                f'cannot drop the currently open database {dbname!r}')
+
+        if self._dbindex.count_connections(dbname):
+            # If there are open EdgeDB connections to the `dbname` DB
+            # just raise the error Postgres would have raised itself.
+            raise errors.ExecutionError(
+                f'database {dbname!r} is being accessed by other users')
+        else:
+            # If, however, there are no open EdgeDB connections, prune
+            # all non-active postgres connection to the `dbname` DB.
+            await self._pg_pool.prune_inactive_connections(dbname)
+
     async def _on_system_config_add(self, setting_name, value):
         # CONFIGURE SYSTEM INSERT ConfigObject;
         if setting_name == 'ports':
